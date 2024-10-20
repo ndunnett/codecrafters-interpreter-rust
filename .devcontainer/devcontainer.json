@@ -1,0 +1,17 @@
+{
+  "image": "ubuntu:jammy",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/ws,type=bind,consistency=cached",
+  "workspaceFolder": "/ws",
+  "containerUser": "dev",
+  "remoteUser": "dev",
+  "onCreateCommand": "wget -qO - https://codecrafters.io/install.sh | sh",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": true,
+      "username": "dev"
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/rust:1": {}
+  }
+}
