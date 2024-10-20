@@ -235,6 +235,11 @@ impl<'a> Scanner<'a> {
         self.source.get(index..=index).unwrap_or("\0")
     }
 
+    fn get_char(&self, index: usize) -> char {
+        // not proud of this
+        self.get(index).chars().next().unwrap()
+    }
+
     fn advance(&mut self) -> &str {
         self.current += 1;
         self.column += 1;
@@ -355,9 +360,17 @@ impl<'a> Scanner<'a> {
                 }
             }
             "\"" => self.string_literal(),
-            s => {
-                let e = ScannerErrorType::UnexpectedCharacter(s.into());
-                self.add_error(e);
+            _ => {
+                let c = self.get_char(self.current - 1);
+
+                if c.is_numeric() {
+                    self.number_literal();
+                } else if c.is_alphabetic() {
+                    self.identifier();
+                } else {
+                    let e = ScannerErrorType::UnexpectedCharacter(c.into());
+                    self.add_error(e);
+                }
             }
         }
     }
@@ -383,6 +396,36 @@ impl<'a> Scanner<'a> {
         self.add_token(TokenType::String);
         self.advance();
         self.set_start();
+    }
+
+    fn number_literal(&mut self) {
+        while self.get_char(self.current).is_numeric() {
+            self.advance();
+        }
+
+        if self.peek() == "." && self.get_char(self.current + 1).is_numeric() {
+            self.advance();
+        }
+
+        while self.get_char(self.current).is_numeric() {
+            self.advance();
+        }
+
+        self.add_token(TokenType::Number);
+    }
+
+    fn identifier(&mut self) {
+        while self.peek().chars().all(|c| c.is_alphanumeric() || c == '_') {
+            self.advance();
+        }
+
+        let name = self.source.get(self.start..self.current).unwrap();
+
+        if let Some(&keyword) = self.keywords.get(name) {
+            self.add_token(keyword);
+        } else {
+            self.add_token(TokenType::Identifier);
+        }
     }
 }
 
@@ -580,5 +623,18 @@ EOF  null";
 EOF  null";
 
         sad_case("\"bar", expected2);
+    }
+
+    #[test]
+    fn number_literals() {
+        let expected1 = "NUMBER 42 42.0
+EOF  null";
+
+        happy_case("42", expected1);
+
+        let expected2 = "NUMBER 1234.1234 1234.1234
+EOF  null";
+
+        happy_case("1234.1234", expected2);
     }
 }
