@@ -11,8 +11,7 @@ enum ExitCode {
     Ok = 0,
     Error = 1,
     UsageError = 2,
-    LexicalError = 65,
-    SyntacticalError = 66,
+    RuntimeError = 65,
     UnableToExecute = 126,
     CommandNotFound = 127,
 }
@@ -42,7 +41,7 @@ fn main() {
                 let exit_code = if errors.is_empty() {
                     ExitCode::Ok
                 } else {
-                    ExitCode::LexicalError
+                    ExitCode::RuntimeError
                 };
 
                 for error in errors {
@@ -60,12 +59,10 @@ fn main() {
                 let mut parser = Parser::new(tokens);
                 let (expressions, parse_errors) = parser.parse_tokens();
 
-                let exit_code = if !scan_errors.is_empty() {
-                    ExitCode::LexicalError
-                } else if !parse_errors.is_empty() {
-                    ExitCode::SyntacticalError
-                } else {
+                let exit_code = if scan_errors.is_empty() && parse_errors.is_empty() {
                     ExitCode::Ok
+                } else {
+                    ExitCode::RuntimeError
                 };
 
                 for error in scan_errors {

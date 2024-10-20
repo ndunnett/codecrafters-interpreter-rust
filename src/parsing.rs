@@ -158,8 +158,8 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_tokens(&mut self) -> (Expr<'a>, Vec<ParserError>) {
-        let errors = self.errors.clone();
         let expr = self.expression();
+        let errors = self.errors.clone();
         (expr, errors)
     }
 
@@ -187,12 +187,10 @@ impl<'a> Parser<'a> {
         &self.tokens[self.current - 1]
     }
 
-    fn advance(&mut self) -> &Token {
+    fn advance(&mut self) {
         if !self.is_at_end() {
             self.current += 1
         }
-
-        self.previous()
     }
 
     fn consume(&mut self, type_: &TokenType) -> bool {
@@ -414,5 +412,29 @@ mod tests {
     #[test]
     fn arithmetic_1() {
         happy_case("16 * 38 / 58", "(/ (* 16.0 38.0) 58.0)");
+    }
+
+    #[test]
+    fn arithmetic_2() {
+        happy_case("52 + 80 - 94", "(- (+ 52.0 80.0) 94.0)");
+    }
+
+    #[test]
+    fn comparison() {
+        happy_case("83 < 99 < 115", "(< (< 83.0 99.0) 115.0)");
+    }
+
+    #[test]
+    fn equality() {
+        happy_case("\"baz\" == \"baz\"", "(== baz baz)");
+    }
+
+    #[test]
+    fn syntactic_errors() {
+        let input = "(72 +)";
+        let (tokens, _) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = super::Parser::new(tokens);
+        let (_, errors) = parser.parse_tokens();
+        assert!(!errors.is_empty());
     }
 }
