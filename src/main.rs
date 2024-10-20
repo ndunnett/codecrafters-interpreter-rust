@@ -2,13 +2,17 @@
 
 use std::{env, fs, process};
 
+mod parsing;
 mod scanning;
+
+use crate::{parsing::Parser, scanning::Scanner};
 
 enum ExitCode {
     Ok = 0,
     Error = 1,
     UsageError = 2,
     LexicalError = 65,
+    SyntacticalError = 66,
     UnableToExecute = 126,
     CommandNotFound = 127,
 }
@@ -33,7 +37,7 @@ fn main() {
     if let Ok(file_contents) = fs::read_to_string(filename) {
         match command.as_str() {
             "tokenize" => {
-                let (tokens, errors) = scanning::Scanner::new(&file_contents).scan_tokens();
+                let (tokens, errors) = Scanner::new(&file_contents).scan_tokens();
 
                 let exit_code = if errors.is_empty() {
                     ExitCode::Ok
@@ -41,14 +45,38 @@ fn main() {
                     ExitCode::LexicalError
                 };
 
-                for e in errors {
-                    eprintln!("{e}");
+                for error in errors {
+                    eprintln!("{error}");
                 }
 
                 for token in tokens {
                     println!("{token}");
                 }
 
+                exit_code.exit()
+            }
+            "parse" => {
+                let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
+                let mut parser = Parser::new(tokens);
+                let (expressions, parse_errors) = parser.parse_tokens();
+
+                let exit_code = if !scan_errors.is_empty() {
+                    ExitCode::LexicalError
+                } else if !parse_errors.is_empty() {
+                    ExitCode::SyntacticalError
+                } else {
+                    ExitCode::Ok
+                };
+
+                for error in scan_errors {
+                    eprintln!("{error}");
+                }
+
+                for error in parse_errors {
+                    eprintln!("{error}");
+                }
+
+                println!("{expressions}");
                 exit_code.exit()
             }
             _ => {

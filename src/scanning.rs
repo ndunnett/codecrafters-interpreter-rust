@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy)]
-enum TokenType {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TokenType {
     EndOfFile,
     LeftParen,
     RightParen,
@@ -91,7 +91,7 @@ impl fmt::Display for TokenType {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Literal<'a> {
+pub enum Literal<'a> {
     Nil,
     Boolean(bool),
     String(&'a str),
@@ -111,11 +111,11 @@ impl fmt::Display for Literal<'_> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Token<'a> {
-    type_: TokenType,
-    lexeme: Option<&'a str>,
-    literal: Literal<'a>,
-    line: usize,
-    column: usize,
+    pub type_: TokenType,
+    pub lexeme: Option<&'a str>,
+    pub literal: Literal<'a>,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl fmt::Display for Token<'_> {
@@ -184,8 +184,8 @@ const KEYWORDS: [(&str, TokenType); 16] = [
 #[derive(Debug, Clone)]
 pub struct Scanner<'a> {
     source: &'a str,
-    pub tokens: Vec<Token<'a>>,
-    pub errors: Vec<ScannerError>,
+    tokens: Vec<Token<'a>>,
+    errors: Vec<ScannerError>,
     start: usize,
     current: usize,
     line: usize,
@@ -248,10 +248,6 @@ impl<'a> Scanner<'a> {
 
     fn peek(&self) -> &str {
         self.get(self.current)
-    }
-
-    fn peek_next(&self) -> &str {
-        self.get(self.current + 1)
     }
 
     fn matches(&mut self, c: &str) -> bool {
