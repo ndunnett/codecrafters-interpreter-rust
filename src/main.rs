@@ -2,10 +2,11 @@
 
 use std::{env, fs, process};
 
+mod evaluation;
 mod parsing;
 mod scanning;
 
-use crate::{parsing::Parser, scanning::Scanner};
+use crate::{evaluation::Interpreter, parsing::Parser, scanning::Scanner};
 
 enum ExitCode {
     Ok = 0,
@@ -75,6 +76,34 @@ fn main() {
 
                 println!("{expressions}");
                 exit_code.exit()
+            }
+            "evaluate" => {
+                let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
+                let mut parser = Parser::new(tokens);
+                let (expression, parse_errors) = parser.parse_tokens();
+
+                if scan_errors.is_empty() && parse_errors.is_empty() {
+                    match Interpreter::new(expression).evaluate() {
+                        Ok(result) => {
+                            println!("{result}");
+                            ExitCode::Ok.exit()
+                        }
+                        Err(e) => {
+                            eprintln!("{e}");
+                            ExitCode::RuntimeError.exit()
+                        }
+                    }
+                } else {
+                    for error in scan_errors {
+                        eprintln!("{error}");
+                    }
+
+                    for error in parse_errors {
+                        eprintln!("{error}");
+                    }
+
+                    ExitCode::RuntimeError.exit()
+                }
             }
             _ => {
                 eprintln!("Unknown command: {command}");

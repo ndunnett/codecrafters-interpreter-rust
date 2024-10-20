@@ -90,15 +90,15 @@ impl fmt::Display for TokenType {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Literal<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
     Nil,
     Boolean(bool),
-    String(&'a str),
+    String(String),
     Number(f64),
 }
 
-impl fmt::Display for Literal<'_> {
+impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Nil => write!(f, "nil"),
@@ -109,24 +109,45 @@ impl fmt::Display for Literal<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl From<Literal> for bool {
+    fn from(literal: Literal) -> bool {
+        match literal {
+            Literal::Boolean(b) => b,
+            Literal::Nil => false,
+            _ => true,
+        }
+    }
+}
+
+impl From<Literal> for String {
+    fn from(literal: Literal) -> String {
+        match literal {
+            Literal::Nil => "nil".into(),
+            Literal::Boolean(b) => format!("{b}"),
+            Literal::String(s) => s,
+            Literal::Number(n) => format!("{n}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Token<'a> {
     pub type_: TokenType,
     pub lexeme: Option<&'a str>,
-    pub literal: Literal<'a>,
+    pub literal: Literal,
     pub line: usize,
     pub column: usize,
 }
 
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (lex, lit) = match self.literal {
+        let (lex, lit) = match &self.literal {
             Literal::Nil => (self.lexeme.unwrap_or("").to_string(), "null".to_string()),
             Literal::Boolean(_) => (self.lexeme.unwrap_or("").to_string(), "null".to_string()),
             Literal::String(s) => (format!("\"{}\"", self.lexeme.unwrap_or("")), s.to_string()),
             Literal::Number(n) => (
                 self.lexeme.unwrap_or("").to_string(),
-                format!("{n}{}", if n.round() == n { ".0" } else { "" }),
+                format!("{n}{}", if n.round() == *n { ".0" } else { "" }),
             ),
         };
 
@@ -265,6 +286,7 @@ impl<'a> Scanner<'a> {
             TokenType::String => self
                 .source
                 .get(self.start..self.current)
+                .map(String::from)
                 .map(Literal::String)
                 .unwrap_or(Literal::Nil),
             TokenType::Number => self

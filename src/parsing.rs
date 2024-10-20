@@ -77,23 +77,23 @@ impl fmt::Display for BinaryOperator {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr<'a> {
+pub enum Expr {
     None,
-    Literal(Literal<'a>),
+    Literal(Literal),
     Unary {
         op: UnaryOperator,
-        right: Box<Expr<'a>>,
+        right: Box<Expr>,
     },
     Binary {
         op: BinaryOperator,
-        left: Box<Expr<'a>>,
-        right: Box<Expr<'a>>,
+        left: Box<Expr>,
+        right: Box<Expr>,
     },
-    Grouping(Box<Expr<'a>>),
-    Program(Vec<Expr<'a>>),
+    Grouping(Box<Expr>),
+    Program(Vec<Expr>),
 }
 
-impl fmt::Display for Expr<'_> {
+impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::None => Ok(()),
@@ -157,7 +157,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_tokens(&mut self) -> (Expr<'a>, Vec<ParserError>) {
+    pub fn parse_tokens(&mut self) -> (Expr, Vec<ParserError>) {
         let expr = self.expression();
         let errors = self.errors.clone();
         (expr, errors)
@@ -227,11 +227,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expression(&mut self) -> Expr<'a> {
+    fn expression(&mut self) -> Expr {
         self.equality()
     }
 
-    fn equality(&mut self) -> Expr<'a> {
+    fn equality(&mut self) -> Expr {
         let mut expr = self.comparison();
 
         while self.matches_one_of(&[TokenType::BangEqual, TokenType::DoubleEqual]) {
@@ -249,7 +249,7 @@ impl<'a> Parser<'a> {
         expr
     }
 
-    fn comparison(&mut self) -> Expr<'a> {
+    fn comparison(&mut self) -> Expr {
         let mut expr = self.term();
 
         while self.matches_one_of(&[
@@ -272,7 +272,7 @@ impl<'a> Parser<'a> {
         expr
     }
 
-    fn term(&mut self) -> Expr<'a> {
+    fn term(&mut self) -> Expr {
         let mut expr = self.factor();
 
         while self.matches_one_of(&[TokenType::Minus, TokenType::Plus]) {
@@ -290,7 +290,7 @@ impl<'a> Parser<'a> {
         expr
     }
 
-    fn factor(&mut self) -> Expr<'a> {
+    fn factor(&mut self) -> Expr {
         let mut expr = self.unary();
 
         while self.matches_one_of(&[TokenType::Slash, TokenType::Star]) {
@@ -308,7 +308,7 @@ impl<'a> Parser<'a> {
         expr
     }
 
-    fn unary(&mut self) -> Expr<'a> {
+    fn unary(&mut self) -> Expr {
         if self.matches_one_of(&[TokenType::Bang, TokenType::Minus]) {
             let op = self.peek().type_.into();
             self.advance();
@@ -319,7 +319,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn primary(&mut self) -> Expr<'a> {
+    fn primary(&mut self) -> Expr {
         if self.matches_one_of(&[
             TokenType::Number,
             TokenType::String,
@@ -327,7 +327,7 @@ impl<'a> Parser<'a> {
             TokenType::False,
             TokenType::Nil,
         ]) {
-            let expr = Expr::Literal(self.tokens[self.current].literal);
+            let expr = Expr::Literal(self.tokens[self.current].literal.clone());
             self.advance();
             expr
         } else if self.matches(&TokenType::LeftParen) {
