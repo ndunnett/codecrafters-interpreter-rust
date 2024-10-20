@@ -216,28 +216,17 @@ impl<'a> Scanner<'a> {
         (self.tokens.clone(), self.errors.clone())
     }
 
-    fn add_token(&mut self, token_type: TokenType) {
-        self.tokens.push(Token {
-            type_: token_type,
-            lexeme: self.source.get(self.start..self.current),
-            literal: Literal::Nil,
-            line: self.line,
-            column: self.column,
-        });
-        self.start = self.current;
-    }
-
-    fn add_error(&mut self, error_type: ScannerErrorType) {
-        self.errors.push(ScannerError {
-            type_: error_type,
-            line: self.line,
-            column: self.column,
-        });
-        self.start = self.current;
-    }
-
     fn is_at_end(&self) -> bool {
         self.current >= self.source.len()
+    }
+
+    fn set_start(&mut self) {
+        self.start = self.current;
+    }
+
+    fn new_line(&mut self) {
+        self.line += 1;
+        self.column = 0;
     }
 
     fn get(&self, index: usize) -> &str {
@@ -270,13 +259,51 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    fn add_token(&mut self, type_: TokenType) {
+        let literal = match type_ {
+            TokenType::String => self
+                .source
+                .get(self.start..self.current)
+                .map(Literal::String)
+                .unwrap_or(Literal::Nil),
+            TokenType::Number => self
+                .source
+                .get(self.start..self.current)
+                .map(str::parse)
+                .unwrap_or(Ok(0.))
+                .map(Literal::Number)
+                .unwrap_or(Literal::Nil),
+            TokenType::True => Literal::Boolean(true),
+            TokenType::False => Literal::Boolean(false),
+            _ => Literal::Nil,
+        };
+
+        self.tokens.push(Token {
+            type_,
+            lexeme: self.source.get(self.start..self.current),
+            literal,
+            line: self.line,
+            column: self.column,
+        });
+
+        self.set_start();
+    }
+
+    fn add_error(&mut self, error_type: ScannerErrorType) {
+        self.errors.push(ScannerError {
+            type_: error_type,
+            line: self.line,
+            column: self.column,
+        });
+        self.set_start();
+    }
+
     fn scan_token(&mut self) {
         match self.advance() {
-            "\t" | " " => self.start = self.current,
+            "\t" | " " => self.set_start(),
             "\n" => {
-                self.start = self.current;
-                self.line += 1;
-                self.column = 0;
+                self.new_line();
+                self.set_start();
             }
             "(" => self.add_token(TokenType::LeftParen),
             ")" => self.add_token(TokenType::RightParen),
@@ -321,18 +348,41 @@ impl<'a> Scanner<'a> {
                     while !self.matches("\n") && !self.is_at_end() {
                         self.advance();
                     }
-                    self.start = self.current;
-                    self.line += 1;
-                    self.column = 0;
+                    self.new_line();
+                    self.set_start();
                 } else {
                     self.add_token(TokenType::Slash);
                 }
             }
+            "\"" => self.string_literal(),
             s => {
                 let e = ScannerErrorType::UnexpectedCharacter(s.into());
                 self.add_error(e);
             }
         }
+    }
+
+    fn string_literal(&mut self) {
+        self.set_start();
+
+        loop {
+            match self.peek() {
+                "\"" => break,
+                "\n" => self.new_line(),
+                _ => {
+                    self.advance();
+                }
+            }
+
+            if self.is_at_end() {
+                self.add_error(ScannerErrorType::UnterminatedString);
+                return;
+            }
+        }
+
+        self.add_token(TokenType::String);
+        self.advance();
+        self.set_start();
     }
 }
 
@@ -517,5 +567,18 @@ PLUS + null
 EOF  null";
 
         sad_case("()  #\t{}\n@\n$\n+++\n// Let's Go!\n+++\n#", expected2);
+    }
+
+    #[test]
+    fn string_literals() {
+        let expected1 = "STRING \"foo baz\" foo baz
+EOF  null";
+
+        happy_case("\"foo baz\"", expected1);
+
+        let expected2 = "[line 1] Error: Unterminated string.
+EOF  null";
+
+        sad_case("\"bar", expected2);
     }
 }
