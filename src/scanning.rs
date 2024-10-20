@@ -365,7 +365,7 @@ impl<'a> Scanner<'a> {
 
                 if c.is_numeric() {
                     self.number_literal();
-                } else if c.is_alphabetic() {
+                } else if c.is_alphabetic() || c == '_' {
                     self.identifier();
                 } else {
                     let e = ScannerErrorType::UnexpectedCharacter(c.into());
@@ -636,5 +636,15 @@ EOF  null";
 EOF  null";
 
         happy_case("1234.1234", expected2);
+    }
+
+    #[test]
+    fn identifiers() {
+        let expected = "IDENTIFIER foo null
+IDENTIFIER bar null
+IDENTIFIER _hello null
+EOF  null";
+
+        happy_case("foo bar _hello", expected);
     }
 }
