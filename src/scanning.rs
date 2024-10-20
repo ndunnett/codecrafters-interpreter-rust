@@ -186,7 +186,7 @@ const KEYWORDS: [(&str, TokenType); 16] = [
 pub struct Scanner<'a> {
     source: &'a str,
     pub tokens: Vec<Token<'a>>,
-    pub error: Option<ScannerError>,
+    pub errors: Vec<ScannerError>,
     start: usize,
     current: usize,
     line: usize,
@@ -199,7 +199,7 @@ impl<'a> Scanner<'a> {
         Self {
             source,
             tokens: Vec::new(),
-            error: None,
+            errors: Vec::new(),
             start: 0,
             current: 0,
             line: 1,
@@ -208,17 +208,13 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> Self {
-        while !self.is_at_end() && self.error.is_none() {
-            self.start = self.current;
+    pub fn scan_tokens(&mut self) -> (Vec<Token<'a>>, Vec<ScannerError>) {
+        while !self.is_at_end() {
             self.scan_token();
         }
 
-        if self.error.is_none() {
-            self.add_token(TokenType::EndOfFile);
-        }
-
-        self.clone()
+        self.add_token(TokenType::EndOfFile);
+        (self.tokens.clone(), self.errors.clone())
     }
 
     fn add_token(&mut self, token_type: TokenType) {
@@ -232,12 +228,13 @@ impl<'a> Scanner<'a> {
         self.start = self.current;
     }
 
-    fn set_error(&mut self, error_type: ScannerErrorType) {
-        self.error = Some(ScannerError {
+    fn add_error(&mut self, error_type: ScannerErrorType) {
+        self.errors.push(ScannerError {
             type_: error_type,
             line: self.line,
             column: self.column,
-        })
+        });
+        self.start = self.current;
     }
 
     fn is_at_end(&self) -> bool {
@@ -310,7 +307,7 @@ impl<'a> Scanner<'a> {
             }
             s => {
                 let e = ScannerErrorType::UnexpectedCharacter(s.into());
-                self.set_error(e);
+                self.add_error(e);
             }
         }
     }
@@ -318,20 +315,44 @@ impl<'a> Scanner<'a> {
 
 #[cfg(test)]
 mod tests {
-    fn runner(input: &str, expected: &str) {
-        let scanner = super::Scanner::new(input).scan_tokens();
+    fn happy_case(input: &str, expected: &str) {
+        let (tokens, errors) = super::Scanner::new(input).scan_tokens();
 
-        if let Some(e) = scanner.error {
-            panic!("failed to scan tokens: {e}");
-        } else {
-            let result = scanner
-                .tokens
+        if errors.is_empty() {
+            let token_output = tokens
                 .iter()
                 .map(|token| format!("{token}"))
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            assert_eq!(result, expected);
+            assert_eq!(token_output, expected);
+        } else {
+            for e in errors {
+                eprintln!("{e}")
+            }
+            panic!("failed to scan tokens");
+        }
+    }
+
+    fn sad_case(input: &str, expected: &str) {
+        let (tokens, errors) = super::Scanner::new(input).scan_tokens();
+
+        if !errors.is_empty() {
+            let error_output = errors
+                .iter()
+                .map(|e| format!("{e}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let token_output = tokens
+                .iter()
+                .map(|token| format!("{token}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert_eq!([error_output, token_output].join("\n"), expected);
+        } else {
+            panic!("failed to return errors");
         }
     }
 
@@ -342,7 +363,7 @@ LEFT_PAREN ( null
 RIGHT_PAREN ) null
 EOF  null";
 
-        runner("(()", expected);
+        happy_case("(()", expected);
     }
 
     #[test]
@@ -353,6 +374,34 @@ RIGHT_BRACE } null
 RIGHT_BRACE } null
 EOF  null";
 
-        runner("{{}}", expected);
+        happy_case("{{}}", expected);
+    }
+
+    #[test]
+    fn other_single_chars() {
+        let expected = "LEFT_PAREN ( null
+LEFT_BRACE { null
+STAR * null
+DOT . null
+COMMA , null
+PLUS + null
+STAR * null
+RIGHT_BRACE } null
+RIGHT_PAREN ) null
+EOF  null";
+
+        happy_case("({*.,+*})", expected);
+    }
+
+    #[test]
+    fn lexical_errors() {
+        let expected = "[line 1] Error: Unexpected character: $
+[line 1] Error: Unexpected character: #
+COMMA , null
+DOT . null
+LEFT_PAREN ( null
+EOF  null";
+
+        sad_case(",.$(#", expected);
     }
 }

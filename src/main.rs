@@ -8,6 +8,7 @@ enum ExitCode {
     Ok = 0,
     Error = 1,
     UsageError = 2,
+    LexicalError = 65,
     UnableToExecute = 126,
     CommandNotFound = 127,
 }
@@ -32,17 +33,23 @@ fn main() {
     if let Ok(file_contents) = fs::read_to_string(filename) {
         match command.as_str() {
             "tokenize" => {
-                let scanner = scanning::Scanner::new(&file_contents).scan_tokens();
+                let (tokens, errors) = scanning::Scanner::new(&file_contents).scan_tokens();
 
-                if let Some(e) = scanner.error {
-                    eprintln!("{e}");
-                    ExitCode::Error.exit()
+                let exit_code = if errors.is_empty() {
+                    ExitCode::Ok
                 } else {
-                    for token in scanner.tokens {
-                        println!("{token}");
-                    }
-                    ExitCode::Ok.exit()
+                    ExitCode::LexicalError
+                };
+
+                for e in errors {
+                    eprintln!("{e}");
                 }
+
+                for token in tokens {
+                    println!("{token}");
+                }
+
+                exit_code.exit()
             }
             _ => {
                 eprintln!("Unknown command: {command}");
