@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::Index;
 
 #[derive(Debug, Clone, Copy)]
 enum TokenType {
@@ -241,18 +240,24 @@ impl<'a> Scanner<'a> {
         self.current >= self.source.len()
     }
 
+    fn get(&self, index: usize) -> &str {
+        // we're not interested in unicode around these parts
+        // https://doc.rust-lang.org/book/ch08-02-strings.html
+        self.source.get(index..=index).unwrap_or("\0")
+    }
+
     fn advance(&mut self) -> &str {
         self.current += 1;
         self.column += 1;
-        self.source.index(self.current - 1..=self.current - 1)
+        self.get(self.current - 1)
     }
 
     fn peek(&self) -> &str {
-        self.source.index(self.current..=self.current)
+        self.get(self.current)
     }
 
     fn peek_next(&self) -> &str {
-        self.source.index(self.current + 1..=self.current + 1)
+        self.get(self.current + 1)
     }
 
     fn matches(&mut self, c: &str) -> bool {
@@ -303,6 +308,16 @@ impl<'a> Scanner<'a> {
                     self.add_token(TokenType::GreaterEqual);
                 } else {
                     self.add_token(TokenType::Greater);
+                }
+            }
+            "/" => {
+                if self.matches("/") {
+                    while !self.matches("\n") && !self.is_at_end() {
+                        self.advance();
+                    }
+                    self.start = self.current;
+                } else {
+                    self.add_token(TokenType::Slash);
                 }
             }
             s => {
@@ -403,5 +418,54 @@ LEFT_PAREN ( null
 EOF  null";
 
         sad_case(",.$(#", expected);
+    }
+
+    #[test]
+    fn assignment_and_equality() {
+        let expected = "EQUAL = null
+LEFT_BRACE { null
+EQUAL_EQUAL == null
+EQUAL = null
+RIGHT_BRACE } null
+EOF  null";
+
+        happy_case("={===}", expected);
+    }
+
+    #[test]
+    fn negation_and_inequality() {
+        let expected = "BANG ! null
+BANG_EQUAL != null
+EQUAL_EQUAL == null
+EOF  null";
+
+        happy_case("!!===", expected);
+    }
+
+    #[test]
+    fn relational_operators() {
+        let expected = "LESS < null
+LESS_EQUAL <= null
+GREATER > null
+GREATER_EQUAL >= null
+EOF  null";
+
+        happy_case("<<=>>=", expected);
+    }
+
+    #[test]
+    fn division_and_comments() {
+        let expected1 = "LEFT_PAREN ( null
+RIGHT_PAREN ) null
+EOF  null";
+
+        happy_case("()// Comment", expected1);
+
+        let expected2 = "SLASH / null
+LEFT_PAREN ( null
+RIGHT_PAREN ) null
+EOF  null";
+
+        happy_case("/()", expected2);
     }
 }
