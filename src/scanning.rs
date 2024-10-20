@@ -272,6 +272,12 @@ impl<'a> Scanner<'a> {
 
     fn scan_token(&mut self) {
         match self.advance() {
+            "\t" | " " => self.start = self.current,
+            "\n" => {
+                self.start = self.current;
+                self.line += 1;
+                self.column = 0;
+            }
             "(" => self.add_token(TokenType::LeftParen),
             ")" => self.add_token(TokenType::RightParen),
             "{" => self.add_token(TokenType::LeftBrace),
@@ -467,5 +473,18 @@ RIGHT_PAREN ) null
 EOF  null";
 
         happy_case("/()", expected2);
+
+        let expected3 = "EOF  null";
+
+        happy_case("///Unicode:£§᯽☺♣", expected3);
+    }
+
+    #[test]
+    fn whitespace() {
+        let expected = "LEFT_PAREN ( null
+RIGHT_PAREN ) null
+EOF  null";
+
+        happy_case("(\t\n )", expected);
     }
 }
