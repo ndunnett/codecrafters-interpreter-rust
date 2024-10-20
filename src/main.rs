@@ -12,7 +12,8 @@ enum ExitCode {
     Ok = 0,
     Error = 1,
     UsageError = 2,
-    RuntimeError = 65,
+    SyntaxError = 65,
+    RuntimeError = 70,
     UnableToExecute = 126,
     CommandNotFound = 127,
 }
@@ -42,7 +43,7 @@ fn main() {
                 let exit_code = if errors.is_empty() {
                     ExitCode::Ok
                 } else {
-                    ExitCode::RuntimeError
+                    ExitCode::SyntaxError
                 };
 
                 for error in errors {
@@ -63,7 +64,7 @@ fn main() {
                 let exit_code = if scan_errors.is_empty() && parse_errors.is_empty() {
                     ExitCode::Ok
                 } else {
-                    ExitCode::RuntimeError
+                    ExitCode::SyntaxError
                 };
 
                 for error in scan_errors {
@@ -102,7 +103,7 @@ fn main() {
                         eprintln!("{error}");
                     }
 
-                    ExitCode::RuntimeError.exit()
+                    ExitCode::SyntaxError.exit()
                 }
             }
             _ => {

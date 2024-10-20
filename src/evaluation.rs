@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(result.unwrap().as_str(), expected);
     }
 
-    fn sad_case(input: &str, _expected: &str) {
+    fn sad_case(input: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
         let (expressions, parse_errors) = parser.parse_tokens();
@@ -184,6 +184,76 @@ mod tests {
 
     #[test]
     fn booleans_and_nil() {
-        happy_case("2 + 3", "5");
+        happy_case("true", "true");
+        happy_case("false", "false");
+        happy_case("nil", "nil");
+    }
+
+    #[test]
+    fn strings_and_numbers() {
+        happy_case("\"hello world!\"", "hello world!");
+        happy_case("10.40", "10.4");
+        happy_case("10", "10");
+    }
+
+    #[test]
+    fn parentheses() {
+        happy_case("(\"hello world!\")", "hello world!");
+        happy_case("(true)", "true");
+        happy_case("(10.40)", "10.4");
+        happy_case("((false))", "false");
+    }
+
+    #[test]
+    fn unary_operators() {
+        happy_case("-73", "-73");
+        happy_case("!true", "false");
+        happy_case("!10.40", "false");
+        happy_case("!((false))", "true");
+    }
+
+    #[test]
+    fn arithmetic_1() {
+        happy_case("42 / 5", "8.4");
+        happy_case("18 * 3 / (3 * 6)", "3");
+        happy_case("(10.40 * 2) / 2", "10.4");
+    }
+
+    #[test]
+    fn arithmetic_2() {
+        happy_case("70 - 65", "5");
+        happy_case("69 - 93", "-24");
+        happy_case("10.40 - 2", "8.4");
+        happy_case("23 + 28 - (-(61 - 99))", "13");
+    }
+
+    #[test]
+    fn string_concatenation() {
+        happy_case("\"hello\" + \" world!\"", "hello world!");
+        happy_case("\"42\" + \"24\"", "4224");
+        happy_case("\"foo\" + \"bar\"", "foobar");
+    }
+
+    #[test]
+    fn relational_operators() {
+        happy_case("57 > -65", "true");
+        happy_case("11 >= 11", "true");
+        happy_case("(54 - 67) >= -(114 / 57 + 11)", "true");
+    }
+
+    #[test]
+    fn equality_operators() {
+        happy_case("\"hello\" == \"world\"", "false");
+        happy_case("\"foo\" != \"bar\"", "true");
+        happy_case("\"foo\" == \"foo\"", "true");
+        happy_case("61 == \"61\"", "false");
+    }
+
+    #[test]
+    fn error_unary() {
+        sad_case("-\"foo\"");
+        sad_case("-true");
+        sad_case("-(\"foo\" + \"bar\")");
+        sad_case("-false");
     }
 }
