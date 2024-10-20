@@ -237,7 +237,8 @@ impl<'a> Parser<'a> {
         let left = self.comparison();
 
         if self.matches_one_of(&[TokenType::BangEqual, TokenType::DoubleEqual]) {
-            let op = self.previous().type_.into();
+            let op = self.peek().type_.into();
+            self.advance();
             let right = Box::new(self.comparison());
             Expr::Binary {
                 op,
@@ -258,7 +259,8 @@ impl<'a> Parser<'a> {
             TokenType::Less,
             TokenType::LessEqual,
         ]) {
-            let op = self.previous().type_.into();
+            let op = self.peek().type_.into();
+            self.advance();
             let right = Box::new(self.term());
             Expr::Binary {
                 op,
@@ -274,7 +276,8 @@ impl<'a> Parser<'a> {
         let left = self.factor();
 
         if self.matches_one_of(&[TokenType::Minus, TokenType::Plus]) {
-            let op = self.previous().type_.into();
+            let op = self.peek().type_.into();
+            self.advance();
             let right = Box::new(self.factor());
             Expr::Binary {
                 op,
@@ -290,7 +293,8 @@ impl<'a> Parser<'a> {
         let left = self.unary();
 
         if self.matches_one_of(&[TokenType::Slash, TokenType::Star]) {
-            let op = self.previous().type_.into();
+            let op = self.peek().type_.into();
+            self.advance();
             let right = Box::new(self.unary());
             Expr::Binary {
                 op,
@@ -304,7 +308,8 @@ impl<'a> Parser<'a> {
 
     fn unary(&mut self) -> Expr<'a> {
         if self.matches_one_of(&[TokenType::Bang, TokenType::Minus]) {
-            let op = self.previous().type_.into();
+            let op = self.peek().type_.into();
+            self.advance();
             let right = Box::new(self.unary());
             Expr::Unary { op, right }
         } else {
@@ -395,5 +400,10 @@ mod tests {
     #[test]
     fn parentheses() {
         happy_case("(\"foo\")", "(group foo)");
+    }
+
+    #[test]
+    fn unary_operators() {
+        happy_case("!true", "(! true)");
     }
 }

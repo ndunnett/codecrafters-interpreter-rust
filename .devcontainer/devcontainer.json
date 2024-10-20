@@ -4,7 +4,11 @@
   "workspaceFolder": "/ws",
   "containerUser": "dev",
   "remoteUser": "dev",
-  "onCreateCommand": "wget -qO - https://codecrafters.io/install.sh | sh",
+  "onCreateCommand": {
+    "install_cli": "wget -qO - https://codecrafters.io/install.sh | sh",
+    "test_alias": "echo \"alias cct='codecrafters test'\" >> ~/.zshenv",
+    "submit_alias": "echo \"alias ccs='codecrafters submit'\" >> ~/.zshenv"
+  },
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": true,
