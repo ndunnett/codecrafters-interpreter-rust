@@ -324,8 +324,8 @@ impl<'a> Parser<'a> {
             self.advance();
             expr
         } else if self.matches(&TokenType::LeftParen) {
-            let inner = self.expression().to_owned();
-            let expr = Expr::Grouping(Box::new(inner));
+            self.advance();
+            let expr = Expr::Grouping(Box::new(self.expression()));
 
             if self.consume(&TokenType::RightParen) {
                 expr
@@ -380,5 +380,20 @@ mod tests {
     #[test]
     fn booleans_and_nil() {
         happy_case("true", "true");
+    }
+
+    #[test]
+    fn number_literals() {
+        happy_case("42.47", "42.47");
+    }
+
+    #[test]
+    fn string_literals() {
+        happy_case("\"hello\"", "hello");
+    }
+
+    #[test]
+    fn parentheses() {
+        happy_case("(\"foo\")", "(group foo)");
     }
 }
