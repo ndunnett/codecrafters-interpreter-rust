@@ -234,26 +234,27 @@ impl<'a> Parser<'a> {
     }
 
     fn equality(&mut self) -> Expr<'a> {
-        let left = self.comparison();
+        let mut expr = self.comparison();
 
-        if self.matches_one_of(&[TokenType::BangEqual, TokenType::DoubleEqual]) {
+        while self.matches_one_of(&[TokenType::BangEqual, TokenType::DoubleEqual]) {
             let op = self.peek().type_.into();
             self.advance();
             let right = Box::new(self.comparison());
-            Expr::Binary {
+
+            expr = Expr::Binary {
                 op,
-                left: Box::new(left),
+                left: Box::new(expr),
                 right,
             }
-        } else {
-            left
         }
+
+        expr
     }
 
     fn comparison(&mut self) -> Expr<'a> {
-        let left = self.term();
+        let mut expr = self.term();
 
-        if self.matches_one_of(&[
+        while self.matches_one_of(&[
             TokenType::Greater,
             TokenType::GreaterEqual,
             TokenType::Less,
@@ -262,48 +263,51 @@ impl<'a> Parser<'a> {
             let op = self.peek().type_.into();
             self.advance();
             let right = Box::new(self.term());
-            Expr::Binary {
+
+            expr = Expr::Binary {
                 op,
-                left: Box::new(left),
+                left: Box::new(expr),
                 right,
             }
-        } else {
-            left
         }
+
+        expr
     }
 
     fn term(&mut self) -> Expr<'a> {
-        let left = self.factor();
+        let mut expr = self.factor();
 
-        if self.matches_one_of(&[TokenType::Minus, TokenType::Plus]) {
+        while self.matches_one_of(&[TokenType::Minus, TokenType::Plus]) {
             let op = self.peek().type_.into();
             self.advance();
             let right = Box::new(self.factor());
-            Expr::Binary {
+
+            expr = Expr::Binary {
                 op,
-                left: Box::new(left),
+                left: Box::new(expr),
                 right,
             }
-        } else {
-            left
         }
+
+        expr
     }
 
     fn factor(&mut self) -> Expr<'a> {
-        let left = self.unary();
+        let mut expr = self.unary();
 
-        if self.matches_one_of(&[TokenType::Slash, TokenType::Star]) {
+        while self.matches_one_of(&[TokenType::Slash, TokenType::Star]) {
             let op = self.peek().type_.into();
             self.advance();
             let right = Box::new(self.unary());
-            Expr::Binary {
+
+            expr = Expr::Binary {
                 op,
-                left: Box::new(left),
+                left: Box::new(expr),
                 right,
             }
-        } else {
-            left
         }
+
+        expr
     }
 
     fn unary(&mut self) -> Expr<'a> {
@@ -405,5 +409,10 @@ mod tests {
     #[test]
     fn unary_operators() {
         happy_case("!true", "(! true)");
+    }
+
+    #[test]
+    fn arithmetic_1() {
+        happy_case("16 * 38 / 58", "(/ (* 16.0 38.0) 58.0)");
     }
 }
