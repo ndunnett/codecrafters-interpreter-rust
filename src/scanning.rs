@@ -322,6 +322,8 @@ impl<'a> Scanner<'a> {
                         self.advance();
                     }
                     self.start = self.current;
+                    self.line += 1;
+                    self.column = 0;
                 } else {
                     self.add_token(TokenType::Slash);
                 }
@@ -486,5 +488,34 @@ RIGHT_PAREN ) null
 EOF  null";
 
         happy_case("(\t\n )", expected);
+    }
+
+    #[test]
+    fn multiline_errors() {
+        let expected1 = "[line 1] Error: Unexpected character: #
+[line 2] Error: Unexpected character: @
+LEFT_PAREN ( null
+RIGHT_PAREN ) null
+EOF  null";
+
+        sad_case("# (\n)\t@", expected1);
+
+        let expected2 = "[line 1] Error: Unexpected character: #
+[line 2] Error: Unexpected character: @
+[line 3] Error: Unexpected character: $
+[line 7] Error: Unexpected character: #
+LEFT_PAREN ( null
+RIGHT_PAREN ) null
+LEFT_BRACE { null
+RIGHT_BRACE } null
+PLUS + null
+PLUS + null
+PLUS + null
+PLUS + null
+PLUS + null
+PLUS + null
+EOF  null";
+
+        sad_case("()  #\t{}\n@\n$\n+++\n// Let's Go!\n+++\n#", expected2);
     }
 }
