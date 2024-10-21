@@ -1,122 +1,15 @@
 use std::fmt;
 
-use crate::scanning::{Literal, Token, TokenType};
-
-#[derive(Debug, Clone, Copy)]
-pub enum UnaryOperator {
-    Negative,
-    Negation,
-}
-
-impl fmt::Display for UnaryOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Negative => write!(f, "-"),
-            Self::Negation => write!(f, "!"),
-        }
-    }
-}
-
-impl From<TokenType> for UnaryOperator {
-    fn from(type_: TokenType) -> Self {
-        match type_ {
-            TokenType::Minus => UnaryOperator::Negative,
-            TokenType::Bang => UnaryOperator::Negation,
-            _ => panic!("faulty UnaryOperator conversion"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum BinaryOperator {
-    Equality,
-    NonEquality,
-    LessThan,
-    LessThanEqual,
-    GreaterThan,
-    GreaterThanEqual,
-    Addition,
-    Subtraction,
-    Multiplication,
-    Division,
-}
-
-impl From<TokenType> for BinaryOperator {
-    fn from(type_: TokenType) -> Self {
-        match type_ {
-            TokenType::DoubleEqual => BinaryOperator::Equality,
-            TokenType::BangEqual => BinaryOperator::NonEquality,
-            TokenType::Less => BinaryOperator::LessThan,
-            TokenType::LessEqual => BinaryOperator::LessThanEqual,
-            TokenType::Greater => BinaryOperator::GreaterThan,
-            TokenType::GreaterEqual => BinaryOperator::GreaterThanEqual,
-            TokenType::Plus => BinaryOperator::Addition,
-            TokenType::Minus => BinaryOperator::Subtraction,
-            TokenType::Star => BinaryOperator::Multiplication,
-            TokenType::Slash => BinaryOperator::Division,
-            _ => panic!("faulty BinaryOperator conversion"),
-        }
-    }
-}
-
-impl fmt::Display for BinaryOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Equality => write!(f, "=="),
-            Self::NonEquality => write!(f, "!="),
-            Self::LessThan => write!(f, "<"),
-            Self::LessThanEqual => write!(f, "<="),
-            Self::GreaterThan => write!(f, ">"),
-            Self::GreaterThanEqual => write!(f, ">="),
-            Self::Addition => write!(f, "+"),
-            Self::Subtraction => write!(f, "-"),
-            Self::Multiplication => write!(f, "*"),
-            Self::Division => write!(f, "/"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Expr {
-    None,
-    Literal(Literal),
-    Unary {
-        op: UnaryOperator,
-        right: Box<Expr>,
-    },
-    Binary {
-        op: BinaryOperator,
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-    Grouping(Box<Expr>),
-    Program(Vec<Expr>),
-}
-
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::None => Ok(()),
-            Self::Literal(literal) => write!(f, "{literal}"),
-            Self::Unary { op, right } => write!(f, "({op} {right})"),
-            Self::Binary { op, left, right } => write!(f, "({op} {left} {right})"),
-            Self::Grouping(expr) => write!(f, "(group {expr})"),
-            Self::Program(prog) => write!(
-                f,
-                "{}",
-                prog.iter()
-                    .map(|e| format!("{e}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-        }
-    }
-}
+use crate::{
+    ast::{Expr, Statement},
+    tokens::{Token, TokenType},
+};
 
 #[derive(Debug, Clone)]
 pub enum ParserErrorType {
     UnexpectedToken(String),
     ExpectedToken(String),
+    IncompleteParse,
 }
 
 impl fmt::Display for ParserErrorType {
@@ -124,6 +17,7 @@ impl fmt::Display for ParserErrorType {
         match self {
             Self::UnexpectedToken(s) => write!(f, "Unexpected token: {s}"),
             Self::ExpectedToken(s) => write!(f, "Expected token: {s}"),
+            Self::IncompleteParse => write!(f, "Failed to consume all tokens."),
         }
     }
 }
@@ -157,10 +51,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_tokens(&mut self) -> (Expr, Vec<ParserError>) {
-        let expr = self.expression();
-        let errors = self.errors.clone();
-        (expr, errors)
+    pub fn parse(&mut self) -> (Vec<Statement>, Vec<ParserError>) {
+        let mut program = Vec::new();
+
+        while let Some(stmt) = self.statement() {
+            program.push(stmt);
+
+            if self.is_at_end() {
+                break;
+            }
+        }
+
+        if !self.is_at_end() {
+            self.add_error(ParserErrorType::IncompleteParse);
+        }
+
+        (program, self.errors.clone())
     }
 
     fn is_at_end(&self) -> bool {
@@ -227,17 +133,42 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expression(&mut self) -> Expr {
+    fn statement(&mut self) -> Option<Statement> {
+        if self.matches(&TokenType::Print) {
+            self.advance();
+            self.print_stmt()
+        } else {
+            self.expression_stmt()
+        }
+    }
+
+    fn print_stmt(&mut self) -> Option<Statement> {
+        let expr = self.expression()?;
+        self.consume(&TokenType::Semicolon);
+        Some(Statement::Print(expr))
+    }
+
+    fn expression_stmt(&mut self) -> Option<Statement> {
+        let expr = self.expression()?;
+
+        if self.matches(&TokenType::Semicolon) {
+            self.advance();
+        }
+
+        Some(Statement::Expr(expr))
+    }
+
+    fn expression(&mut self) -> Option<Expr> {
         self.equality()
     }
 
-    fn equality(&mut self) -> Expr {
-        let mut expr = self.comparison();
+    fn equality(&mut self) -> Option<Expr> {
+        let mut expr = self.comparison()?;
 
         while self.matches_one_of(&[TokenType::BangEqual, TokenType::DoubleEqual]) {
             let op = self.peek().type_.into();
             self.advance();
-            let right = Box::new(self.comparison());
+            let right = Box::new(self.comparison()?);
 
             expr = Expr::Binary {
                 op,
@@ -246,11 +177,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        expr
+        Some(expr)
     }
 
-    fn comparison(&mut self) -> Expr {
-        let mut expr = self.term();
+    fn comparison(&mut self) -> Option<Expr> {
+        let mut expr = self.term()?;
 
         while self.matches_one_of(&[
             TokenType::Greater,
@@ -260,7 +191,7 @@ impl<'a> Parser<'a> {
         ]) {
             let op = self.peek().type_.into();
             self.advance();
-            let right = Box::new(self.term());
+            let right = Box::new(self.term()?);
 
             expr = Expr::Binary {
                 op,
@@ -269,16 +200,16 @@ impl<'a> Parser<'a> {
             }
         }
 
-        expr
+        Some(expr)
     }
 
-    fn term(&mut self) -> Expr {
-        let mut expr = self.factor();
+    fn term(&mut self) -> Option<Expr> {
+        let mut expr = self.factor()?;
 
         while self.matches_one_of(&[TokenType::Minus, TokenType::Plus]) {
             let op = self.peek().type_.into();
             self.advance();
-            let right = Box::new(self.factor());
+            let right = Box::new(self.factor()?);
 
             expr = Expr::Binary {
                 op,
@@ -287,16 +218,16 @@ impl<'a> Parser<'a> {
             }
         }
 
-        expr
+        Some(expr)
     }
 
-    fn factor(&mut self) -> Expr {
-        let mut expr = self.unary();
+    fn factor(&mut self) -> Option<Expr> {
+        let mut expr = self.unary()?;
 
         while self.matches_one_of(&[TokenType::Slash, TokenType::Star]) {
             let op = self.peek().type_.into();
             self.advance();
-            let right = Box::new(self.unary());
+            let right = Box::new(self.unary()?);
 
             expr = Expr::Binary {
                 op,
@@ -305,21 +236,21 @@ impl<'a> Parser<'a> {
             }
         }
 
-        expr
+        Some(expr)
     }
 
-    fn unary(&mut self) -> Expr {
+    fn unary(&mut self) -> Option<Expr> {
         if self.matches_one_of(&[TokenType::Bang, TokenType::Minus]) {
             let op = self.peek().type_.into();
             self.advance();
-            let right = Box::new(self.unary());
-            Expr::Unary { op, right }
+            let right = Box::new(self.unary()?);
+            Some(Expr::Unary { op, right })
         } else {
             self.primary()
         }
     }
 
-    fn primary(&mut self) -> Expr {
+    fn primary(&mut self) -> Option<Expr> {
         if self.matches_one_of(&[
             TokenType::Number,
             TokenType::String,
@@ -329,59 +260,62 @@ impl<'a> Parser<'a> {
         ]) {
             let expr = Expr::Literal(self.tokens[self.current].literal.clone());
             self.advance();
-            expr
+            Some(expr)
         } else if self.matches(&TokenType::LeftParen) {
             self.advance();
-            let expr = Expr::Grouping(Box::new(self.expression()));
+            let expr = Expr::Grouping(Box::new(self.expression()?));
 
             if self.consume(&TokenType::RightParen) {
-                expr
+                Some(expr)
             } else {
-                Expr::None
+                None
             }
         } else {
             self.add_error(ParserErrorType::UnexpectedToken(format!("{}", self.peek())));
-            Expr::None
+            None
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    fn happy_case(input: &str, expected: &str) {
-        let (tokens, _) = crate::scanning::Scanner::new(input).scan_tokens();
-        let mut parser = super::Parser::new(tokens);
-        let (expressions, errors) = parser.parse_tokens();
+mod expr_tests {
+    use crate::ast::Statement;
 
-        if errors.is_empty() {
-            assert_eq!(format!("{expressions}"), expected);
+    fn happy_case(input: &str, expected: &str) {
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = super::Parser::new(tokens);
+        let (program, parse_errors) = parser.parse();
+        assert!(scan_errors.is_empty());
+        assert!(parse_errors.is_empty());
+        assert_eq!(program.len(), 1);
+
+        if let Statement::Expr(expr) = &program[0] {
+            assert_eq!(format!("{expr:?}"), expected);
         } else {
-            for e in errors {
-                eprintln!("{e}")
-            }
-            panic!("failed to parse program");
+            panic!("failed to extract expression from program")
         }
     }
 
     fn sad_case(input: &str, expected: &str) {
-        let (tokens, _) = crate::scanning::Scanner::new(input).scan_tokens();
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = super::Parser::new(tokens);
-        let (expressions, errors) = parser.parse_tokens();
+        let (program, parse_errors) = parser.parse();
+        assert!(scan_errors.is_empty());
+        assert!(!parse_errors.is_empty());
 
-        if !errors.is_empty() {
-            let error_output = errors
-                .iter()
-                .map(|e| format!("{e}"))
-                .collect::<Vec<_>>()
-                .join("\n");
+        let error_output = parse_errors
+            .iter()
+            .map(|e| format!("{e}"))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-            assert_eq!(
-                [error_output, format!("{expressions}")].join("\n"),
-                expected
-            );
-        } else {
-            panic!("failed to return errors");
-        }
+        let program_output = program
+            .iter()
+            .map(|s| format!("{s:?}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!([error_output, program_output].join("\n"), expected);
     }
 
     #[test]
@@ -434,7 +368,7 @@ mod tests {
         let input = "(72 +)";
         let (tokens, _) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = super::Parser::new(tokens);
-        let (_, errors) = parser.parse_tokens();
+        let (_, errors) = parser.parse();
         assert!(!errors.is_empty());
     }
 }

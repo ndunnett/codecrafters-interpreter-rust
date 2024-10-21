@@ -1,8 +1,11 @@
-use std::fmt;
+use std::{
+    fmt,
+    io::{self, Write},
+};
 
 use crate::{
-    parsing::{BinaryOperator, Expr, UnaryOperator},
-    scanning::Literal,
+    ast::{BinaryOperator, Expr, Statement, UnaryOperator},
+    literals::Literal,
 };
 
 #[derive(Debug, Clone)]
@@ -20,28 +23,157 @@ impl fmt::Display for InterpreterError {
     }
 }
 
-pub struct Interpreter {
-    expr: Expr,
+#[derive(Default, Debug, Clone)]
+pub struct Buffer {
+    buf: Vec<u8>,
 }
 
-impl Interpreter {
-    pub fn new(expr: Expr) -> Self {
-        Self { expr }
+impl Buffer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl From<Buffer> for String {
+    fn from(buffer: Buffer) -> String {
+        String::from_utf8(buffer.buf).unwrap()
+    }
+}
+
+#[derive(Debug)]
+pub enum Output<'a> {
+    Null,
+    Buffer(&'a mut Buffer),
+    Stdout(io::Stdout),
+    Stderr(io::Stderr),
+}
+
+impl From<io::Stdout> for Output<'_> {
+    fn from(output: io::Stdout) -> Self {
+        Self::Stdout(output)
+    }
+}
+
+impl From<io::Stderr> for Output<'_> {
+    fn from(output: io::Stderr) -> Self {
+        Self::Stderr(output)
+    }
+}
+
+impl<'a> From<&'a mut Buffer> for Output<'a> {
+    fn from(output: &'a mut Buffer) -> Self {
+        Self::Buffer(output)
+    }
+}
+
+impl io::Write for Output<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match *self {
+            Self::Null => Ok(0),
+            Self::Buffer(ref mut w) => w.buf.write(buf),
+            Self::Stdout(ref mut w) => w.write(buf),
+            Self::Stderr(ref mut w) => w.write(buf),
+        }
     }
 
-    pub fn evaluate(&self) -> Result<String, InterpreterError> {
-        expression(&self.expr).map(String::from)
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        match *self {
+            Self::Null => Ok(()),
+            Self::Buffer(ref mut w) => w.buf.write_all(buf),
+            Self::Stdout(ref mut w) => w.write_all(buf),
+            Self::Stderr(ref mut w) => w.write_all(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match *self {
+            Self::Null => Ok(()),
+            Self::Buffer(ref mut w) => w.buf.flush(),
+            Self::Stdout(ref mut w) => w.flush(),
+            Self::Stderr(ref mut w) => w.flush(),
+        }
+    }
+}
+
+pub struct Interpreter<'a> {
+    pub stdout: Output<'a>,
+    pub stderr: Output<'a>,
+}
+
+impl Default for Interpreter<'_> {
+    fn default() -> Self {
+        Self {
+            stdout: Output::Stdout(io::stdout()),
+            stderr: Output::Stderr(io::stderr()),
+        }
+    }
+}
+
+impl<'a> Interpreter<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn redirect_stdout(&mut self, output: Output<'a>) {
+        self.stdout = output;
+    }
+
+    pub fn redirect_stderr(&mut self, output: Output<'a>) {
+        self.stderr = output;
+    }
+
+    pub fn evaluate(&self, program: &[Statement]) -> Result<String, InterpreterError> {
+        let mut buffer = Buffer::new();
+        let mut output = Output::Buffer(&mut buffer);
+
+        for stmt in program {
+            let _ = match stmt {
+                Statement::Expr(expr) => match expression(expr) {
+                    Ok(result) => writeln!(output, "{result}"),
+                    Err(e) => return Err(e),
+                },
+                Statement::Print(_) => {
+                    return Err(InterpreterError::RuntimeError(
+                        "Evaluation mode only supports simple expressions.".into(),
+                    ))
+                }
+            };
+        }
+
+        Ok(buffer.into())
+    }
+
+    pub fn run(&mut self, program: &[Statement]) -> Result<(), InterpreterError> {
+        for stmt in program {
+            self.statement(stmt)?;
+        }
+
+        Ok(())
+    }
+
+    fn statement(&mut self, stmt: &Statement) -> Result<(), InterpreterError> {
+        match stmt {
+            Statement::Expr(expr) => match expression(expr) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            },
+            Statement::Print(expr) => match expression(expr) {
+                Ok(result) => {
+                    let _ = writeln!(self.stdout, "{result}");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            },
+        }
     }
 }
 
 fn expression(expr: &Expr) -> Result<Literal, InterpreterError> {
     match expr {
-        Expr::None => Ok(Literal::Nil),
         Expr::Literal(literal) => Ok(literal.clone()),
         Expr::Grouping(inner) => expression(inner),
         Expr::Unary { op, right } => unary(op, right),
         Expr::Binary { op, left, right } => binary(op, left, right),
-        Expr::Program(exprs) => program(exprs),
     }
 }
 
@@ -153,32 +285,29 @@ fn comparison(
     }
 }
 
-fn program(_exprs: &[Expr]) -> Result<Literal, InterpreterError> {
-    unimplemented!()
-}
-
 #[cfg(test)]
-mod tests {
+mod eval_tests {
     fn happy_case(input: &str, expected: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
-        let (expressions, parse_errors) = parser.parse_tokens();
+        let (program, parse_errors) = parser.parse();
         assert!(scan_errors.is_empty());
         assert!(parse_errors.is_empty());
 
-        let result = super::Interpreter::new(expressions).evaluate();
+        let result = super::Interpreter::new().evaluate(&program);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().as_str(), expected);
+        assert_eq!(result.unwrap(), format!("{expected}\n"));
     }
 
     fn sad_case(input: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
-        let (expressions, parse_errors) = parser.parse_tokens();
+        let (program, parse_errors) = parser.parse();
         assert!(scan_errors.is_empty());
         assert!(parse_errors.is_empty());
+        assert!(!program.is_empty());
 
-        let result = super::Interpreter::new(expressions).evaluate();
+        let result = super::Interpreter::new().evaluate(&program);
         assert!(result.is_err());
     }
 
@@ -255,5 +384,66 @@ mod tests {
         sad_case("-true");
         sad_case("-(\"foo\" + \"bar\")");
         sad_case("-false");
+    }
+
+    #[test]
+    fn error_binary_1() {
+        sad_case("\"foo\" * 42");
+        sad_case("true / 2");
+        sad_case("\"foo\" * \"bar\"");
+        sad_case("false / true");
+    }
+
+    #[test]
+    fn error_binary_2() {
+        sad_case("\"foo\" + true");
+        sad_case("42 - true");
+        sad_case("true + false");
+        sad_case("\"foo\" - \"bar\"");
+    }
+
+    #[test]
+    fn error_relational() {
+        sad_case("\"foo\" < false");
+        sad_case("true < 2");
+        sad_case("(\"foo\" - \"bar\") < 42");
+        sad_case("false > true");
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    fn happy_case(input: &str, expected: &str) {
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = crate::parsing::Parser::new(tokens);
+        let (program, parse_errors) = parser.parse();
+        assert!(scan_errors.is_empty());
+        assert!(parse_errors.is_empty());
+
+        let mut buffer = super::Buffer::new();
+        let output = super::Output::Buffer(&mut buffer);
+        let mut interpreter = super::Interpreter::new();
+        interpreter.redirect_stdout(output);
+
+        assert!(interpreter.run(&program).is_ok());
+        assert_eq!(String::from(buffer), format!("{expected}\n"));
+    }
+
+    fn sad_case(input: &str) {
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = crate::parsing::Parser::new(tokens);
+        let (program, parse_errors) = parser.parse();
+        assert!(scan_errors.is_empty());
+        assert!(parse_errors.is_empty());
+
+        let result = super::Interpreter::new().run(&program);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn print() {
+        happy_case("print \"Hello, World!\";", "Hello, World!");
+        happy_case("print 42;", "42");
+        happy_case("print 12 + 24;", "36");
     }
 }

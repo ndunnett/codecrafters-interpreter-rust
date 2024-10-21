@@ -2,15 +2,17 @@
 
 use std::{env, fs, process};
 
+mod ast;
 mod evaluation;
+mod literals;
 mod parsing;
 mod scanning;
+mod tokens;
 
 use crate::{evaluation::Interpreter, parsing::Parser, scanning::Scanner};
 
 enum ExitCode {
     Ok = 0,
-    Error = 1,
     UsageError = 2,
     SyntaxError = 65,
     RuntimeError = 70,
@@ -59,7 +61,7 @@ fn main() {
             "parse" => {
                 let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
                 let mut parser = Parser::new(tokens);
-                let (expressions, parse_errors) = parser.parse_tokens();
+                let (program, parse_errors) = parser.parse();
 
                 let exit_code = if scan_errors.is_empty() && parse_errors.is_empty() {
                     ExitCode::Ok
@@ -75,16 +77,19 @@ fn main() {
                     eprintln!("{error}");
                 }
 
-                println!("{expressions}");
+                for statement in program {
+                    println!("{statement:?}");
+                }
+
                 exit_code.exit()
             }
             "evaluate" => {
                 let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
                 let mut parser = Parser::new(tokens);
-                let (expression, parse_errors) = parser.parse_tokens();
+                let (program, parse_errors) = parser.parse();
 
                 if scan_errors.is_empty() && parse_errors.is_empty() {
-                    match Interpreter::new(expression).evaluate() {
+                    match Interpreter::new().evaluate(&program) {
                         Ok(result) => {
                             println!("{result}");
                             ExitCode::Ok.exit()
@@ -95,16 +100,31 @@ fn main() {
                         }
                     }
                 } else {
-                    for error in scan_errors {
-                        eprintln!("{error}");
-                    }
-
-                    for error in parse_errors {
-                        eprintln!("{error}");
-                    }
-
-                    ExitCode::SyntaxError.exit()
+                    scan_errors.iter().for_each(|e| eprintln!("{e}"));
+                    parse_errors.iter().for_each(|e| eprintln!("{e}"));
                 }
+
+                ExitCode::SyntaxError.exit()
+            }
+            "run" => {
+                let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
+                let mut parser = Parser::new(tokens);
+                let (program, parse_errors) = parser.parse();
+
+                if scan_errors.is_empty() && parse_errors.is_empty() {
+                    match Interpreter::new().run(&program) {
+                        Ok(_) => ExitCode::Ok.exit(),
+                        Err(e) => {
+                            eprintln!("{e}");
+                            ExitCode::RuntimeError.exit()
+                        }
+                    }
+                } else {
+                    scan_errors.iter().for_each(|e| eprintln!("{e}"));
+                    parse_errors.iter().for_each(|e| eprintln!("{e}"));
+                }
+
+                ExitCode::SyntaxError.exit()
             }
             _ => {
                 eprintln!("Unknown command: {command}");
