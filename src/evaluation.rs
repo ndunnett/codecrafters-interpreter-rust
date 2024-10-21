@@ -446,4 +446,53 @@ mod run_tests {
         happy_case("print 42;", "42");
         happy_case("print 12 + 24;", "36");
     }
+
+    #[test]
+    fn print_multiple() {
+        happy_case(
+            "print \"world\" + \"baz\" + \"bar\";
+print 27 - 26;
+print \"bar\" == \"quz\";",
+            "worldbazbar
+1
+false",
+        );
+
+        happy_case(
+            "print \"hello\"; print true;
+print false;
+print \"bar\"; print 43;",
+            "hello
+true
+false
+bar
+43",
+        );
+
+        happy_case(
+            "print 81;
+    print 81 + 46;
+        print 81 + 46 + 19;",
+            "81
+127
+146",
+        );
+
+        happy_case(
+            "print true != true;
+
+print \"36
+10
+78
+\";
+
+print \"There should be an empty line above this.\";",
+            "false
+36
+10
+78
+
+There should be an empty line above this.",
+        );
+    }
 }

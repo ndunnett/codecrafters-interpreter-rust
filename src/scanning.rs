@@ -250,7 +250,10 @@ impl<'a> Scanner<'a> {
         loop {
             match self.peek() {
                 "\"" => break,
-                "\n" => self.new_line(),
+                "\n" => {
+                    self.advance();
+                    self.new_line();
+                }
                 _ => {
                     self.advance();
                 }
