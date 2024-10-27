@@ -76,12 +76,39 @@ impl fmt::Display for BinaryOperator {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum LogicalOperator {
+    And,
+    Or,
+}
+
+impl From<TokenType> for LogicalOperator {
+    fn from(type_: TokenType) -> Self {
+        match type_ {
+            TokenType::And => LogicalOperator::And,
+            TokenType::Or => LogicalOperator::Or,
+            _ => panic!("faulty LogicalOperator conversion"),
+        }
+    }
+}
+
+impl fmt::Display for LogicalOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::And => write!(f, "and"),
+            Self::Or => write!(f, "or"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum Statement {
     VarDecl(String, Option<Expr>),
     Expr(Expr),
     Print(Expr),
     Block(Vec<Statement>),
+    If(Expr, Box<Statement>, Option<Box<Statement>>),
+    While(Expr, Box<Statement>),
 }
 
 impl fmt::Debug for Statement {
@@ -105,6 +132,14 @@ impl fmt::Debug for Statement {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::If(expr, then, else_) => {
+                if let Some(else_) = else_ {
+                    write!(f, "(if {expr:?} then {:?} else {else_:?})", *then)
+                } else {
+                    write!(f, "(if {expr:?} then {:?})", *then)
+                }
+            }
+            Self::While(expr, body) => write!(f, "(while {expr:?} then {:?})", *body),
         }
     }
 }
@@ -130,6 +165,14 @@ impl fmt::Display for Statement {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::If(expr, then, else_) => {
+                if let Some(else_) = else_ {
+                    write!(f, "(if {expr} then {} else {else_})", *then)
+                } else {
+                    write!(f, "(if {expr} then {})", *then)
+                }
+            }
+            Self::While(expr, body) => write!(f, "(while {expr} then {})", *body),
         }
     }
 }
@@ -144,6 +187,11 @@ impl From<Statement> for String {
 pub enum Expr {
     Assignment(String, Box<Expr>),
     Variable(String),
+    Logical {
+        op: LogicalOperator,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     Literal(Literal),
     Unary {
         op: UnaryOperator,
@@ -162,6 +210,7 @@ impl fmt::Debug for Expr {
         match self {
             Self::Assignment(name, expr) => write!(f, "(assign {name}, {expr:?})"),
             Self::Variable(name) => write!(f, "{name}"),
+            Self::Logical { op, left, right } => write!(f, "({op} {left:?} {right:?})"),
             Self::Literal(literal) => write!(f, "{literal:?}"),
             Self::Unary { op, right } => write!(f, "({op} {right:?})"),
             Self::Binary { op, left, right } => write!(f, "({op} {left:?} {right:?})"),
@@ -175,6 +224,7 @@ impl fmt::Display for Expr {
         match self {
             Self::Assignment(name, expr) => write!(f, "(assign {name}, {expr})"),
             Self::Variable(name) => write!(f, "{name}"),
+            Self::Logical { op, left, right } => write!(f, "({op} {left} {right})"),
             Self::Literal(literal) => write!(f, "{literal}"),
             Self::Unary { op, right } => write!(f, "({op} {right})"),
             Self::Binary { op, left, right } => write!(f, "({op} {left} {right})"),

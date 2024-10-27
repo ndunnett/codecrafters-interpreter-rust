@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::{
     ast::{Expr, Statement},
+    literals::Literal,
     tokens::{Token, TokenType},
 };
 
@@ -58,7 +59,7 @@ impl<'a> Parser<'a> {
     pub fn parse_program(&mut self) -> (Vec<Statement>, Vec<ParserError>) {
         let mut program = Vec::new();
 
-        while let Some(stmt) = self.block() {
+        while let Some(stmt) = self.statement() {
             program.push(stmt);
 
             if self.is_at_end() {
@@ -149,43 +150,32 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn block(&mut self) -> Option<Statement> {
-        if self.matches(&TokenType::LeftBrace) {
-            self.advance();
-            let mut stmts = Vec::new();
-
-            while !self.matches(&TokenType::RightBrace) && !self.is_at_end() {
-                stmts.push(self.block()?);
-            }
-
-            self.consume(&TokenType::RightBrace);
-            Some(Statement::Block(stmts))
-        } else {
-            self.statement()
+    fn statement(&mut self) -> Option<Statement> {
+        match self.peek().type_ {
+            TokenType::LeftBrace => self.block(),
+            TokenType::Var => self.variable_declaration(),
+            TokenType::Print => self.print_statement(),
+            TokenType::If => self.if_statement(),
+            TokenType::While => self.while_statement(),
+            TokenType::For => self.for_statement(),
+            _ => self.expression_statement(),
         }
     }
 
-    fn statement(&mut self) -> Option<Statement> {
-        let stmt = match self.peek().type_ {
-            TokenType::Var => {
-                self.advance();
-                self.variable_declaration()
-            }
-            TokenType::Print => {
-                self.advance();
-                self.print_stmt()
-            }
-            _ => self.expression_stmt(),
-        };
+    fn block(&mut self) -> Option<Statement> {
+        self.advance();
+        let mut stmts = Vec::new();
 
-        if !self.is_at_end() {
-            self.consume(&TokenType::Semicolon);
+        while !self.matches(&TokenType::RightBrace) && !self.is_at_end() {
+            stmts.push(self.statement()?);
         }
 
-        stmt
+        self.consume(&TokenType::RightBrace);
+        Some(Statement::Block(stmts))
     }
 
     fn variable_declaration(&mut self) -> Option<Statement> {
+        self.advance();
         let name = String::from(self.consume(&TokenType::Identifier)?.lexeme?);
 
         let initialiser = if self.matches(&TokenType::Equal) {
@@ -195,15 +185,105 @@ impl<'a> Parser<'a> {
             None
         };
 
+        if !self.is_at_end() {
+            self.consume(&TokenType::Semicolon);
+        }
+
         Some(Statement::VarDecl(name, initialiser))
     }
 
-    fn print_stmt(&mut self) -> Option<Statement> {
-        Some(Statement::Print(self.expression()?))
+    fn print_statement(&mut self) -> Option<Statement> {
+        self.advance();
+        let expr = self.expression()?;
+
+        if !self.is_at_end() {
+            self.consume(&TokenType::Semicolon);
+        }
+
+        Some(Statement::Print(expr))
     }
 
-    fn expression_stmt(&mut self) -> Option<Statement> {
-        Some(Statement::Expr(self.expression()?))
+    fn if_statement(&mut self) -> Option<Statement> {
+        self.advance();
+        self.consume(&TokenType::LeftParen);
+        let expr = self.expression()?;
+        self.consume(&TokenType::RightParen);
+
+        let then_block = Box::new(self.statement()?);
+        let else_block = if self.matches(&TokenType::Else) {
+            self.advance();
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+
+        Some(Statement::If(expr, then_block, else_block))
+    }
+
+    fn while_statement(&mut self) -> Option<Statement> {
+        self.advance();
+        self.consume(&TokenType::LeftParen);
+        let expr = self.expression()?;
+        self.consume(&TokenType::RightParen);
+        Some(Statement::While(expr, Box::new(self.statement()?)))
+    }
+
+    fn for_statement(&mut self) -> Option<Statement> {
+        self.advance();
+        self.consume(&TokenType::LeftParen);
+
+        let mut body = Vec::new();
+
+        if self.matches(&TokenType::Semicolon) {
+            self.advance();
+        } else if self.matches(&TokenType::Var) {
+            if let Some(decl) = self.variable_declaration() {
+                body.push(decl);
+            }
+        } else if let Some(decl) = self.expression_statement() {
+            body.push(decl);
+        }
+
+        let condition = if self.matches(&TokenType::Semicolon) {
+            self.advance();
+            None
+        } else {
+            let expr = self.expression();
+            self.consume(&TokenType::Semicolon);
+            expr
+        }
+        .unwrap_or(Expr::Literal(Literal::Boolean(true)));
+
+        let increment = if self.matches(&TokenType::RightParen) {
+            self.advance();
+            None
+        } else {
+            let expr = self.expression().map(Statement::Expr);
+            self.consume(&TokenType::RightParen);
+            expr
+        };
+
+        body.push(self.statement()?);
+
+        if let Some(increment) = increment {
+            body.push(increment);
+        }
+
+        self.consume(&TokenType::RightParen);
+        Some(Statement::While(
+            condition,
+            Box::new(Statement::Block(body)),
+        ))
+    }
+
+    fn expression_statement(&mut self) -> Option<Statement> {
+        let expr = self.expression()?;
+
+        if !self.is_at_end() {
+            self.consume(&TokenType::Semicolon);
+        }
+
+        Some(Statement::Expr(expr))
     }
 
     fn expression(&mut self) -> Option<Expr> {
@@ -211,7 +291,7 @@ impl<'a> Parser<'a> {
     }
 
     fn assignment(&mut self) -> Option<Expr> {
-        let expr = self.equality();
+        let expr = self.logical_or();
 
         if self.matches(&TokenType::Equal) {
             if let Some(Expr::Variable(name)) = expr {
@@ -230,6 +310,42 @@ impl<'a> Parser<'a> {
         } else {
             expr
         }
+    }
+
+    fn logical_or(&mut self) -> Option<Expr> {
+        let mut expr = self.logical_and()?;
+
+        while self.matches(&TokenType::Or) {
+            let op = self.peek().type_.into();
+            self.advance();
+            let right = Box::new(self.logical_and()?);
+
+            expr = Expr::Logical {
+                op,
+                left: Box::new(expr),
+                right,
+            }
+        }
+
+        Some(expr)
+    }
+
+    fn logical_and(&mut self) -> Option<Expr> {
+        let mut expr = self.equality()?;
+
+        while self.matches(&TokenType::And) {
+            let op = self.peek().type_.into();
+            self.advance();
+            let right = Box::new(self.equality()?);
+
+            expr = Expr::Logical {
+                op,
+                left: Box::new(expr),
+                right,
+            }
+        }
+
+        Some(expr)
     }
 
     fn equality(&mut self) -> Option<Expr> {

@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    ast::{BinaryOperator, Expr, Statement, UnaryOperator},
+    ast::{BinaryOperator, Expr, LogicalOperator, Statement, UnaryOperator},
     literals::Literal,
 };
 
@@ -98,18 +98,20 @@ impl io::Write for Output<'_> {
     }
 }
 
+type RcScope = Rc<RefCell<Scope>>;
+
 #[derive(Default)]
 struct Scope {
-    parent: Option<Rc<RefCell<Scope>>>,
+    parent: Option<RcScope>,
     values: HashMap<String, Literal>,
 }
 
 impl Scope {
-    pub fn new() -> Rc<RefCell<Self>> {
+    pub fn new() -> RcScope {
         Rc::new(RefCell::new(Self::default()))
     }
 
-    pub fn child_from(parent: &Rc<RefCell<Self>>) -> Rc<RefCell<Self>> {
+    pub fn child_from(parent: &RcScope) -> RcScope {
         Rc::new(RefCell::new(Self {
             parent: Some(parent.clone()),
             ..Default::default()
@@ -149,6 +151,12 @@ impl Scope {
             false
         }
     }
+}
+
+#[derive(PartialEq)]
+pub enum Signal {
+    Ok,
+    Break,
 }
 
 pub struct Interpreter<'a> {
@@ -191,44 +199,40 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    pub fn run(&mut self, program: &[Statement]) -> Result<(), InterpreterError> {
+    pub fn run(&mut self, program: &[Statement]) -> Result<Signal, InterpreterError> {
         let scope = Scope::new();
 
         for stmt in program {
             self.statement(&scope, stmt)?;
         }
 
-        Ok(())
+        Ok(Signal::Ok)
     }
 
-    fn statement(
-        &mut self,
-        scope: &Rc<RefCell<Scope>>,
-        stmt: &Statement,
-    ) -> Result<(), InterpreterError> {
+    fn statement(&mut self, scope: &RcScope, stmt: &Statement) -> Result<Signal, InterpreterError> {
         match stmt {
             Statement::VarDecl(name, expr) => {
                 if let Some(expr) = expr {
                     match expression(scope, expr) {
                         Ok(result) => {
                             scope.borrow_mut().define(name, result);
-                            Ok(())
+                            Ok(Signal::Ok)
                         }
                         Err(e) => Err(e),
                     }
                 } else {
                     scope.borrow_mut().define(name, Literal::Nil);
-                    Ok(())
+                    Ok(Signal::Ok)
                 }
             }
             Statement::Expr(expr) => match expression(scope, expr) {
-                Ok(_) => Ok(()),
+                Ok(_) => Ok(Signal::Ok),
                 Err(e) => Err(e),
             },
             Statement::Print(expr) => match expression(scope, expr) {
                 Ok(result) => {
                     let _ = writeln!(self.stdout, "{result}");
-                    Ok(())
+                    Ok(Signal::Ok)
                 }
                 Err(e) => Err(e),
             },
@@ -239,26 +243,35 @@ impl<'a> Interpreter<'a> {
                     self.statement(&child_scope, stmt)?;
                 }
 
-                Ok(())
+                Ok(Signal::Ok)
+            }
+            Statement::If(expr, then, else_) => {
+                if bool::from(expression(scope, expr)?) {
+                    self.statement(scope, then)
+                } else if let Some(else_) = else_ {
+                    self.statement(scope, else_)
+                } else {
+                    Ok(Signal::Ok)
+                }
+            }
+            Statement::While(expr, body) => {
+                while bool::from(expression(scope, expr)?) {
+                    if self.statement(scope, body)? == Signal::Break {
+                        break;
+                    }
+                }
+
+                Ok(Signal::Ok)
             }
         }
     }
 }
 
-fn expression(scope: &Rc<RefCell<Scope>>, expr: &Expr) -> Result<Literal, InterpreterError> {
+fn expression(scope: &RcScope, expr: &Expr) -> Result<Literal, InterpreterError> {
     match expr {
-        Expr::Assignment(name, expr) => {
-            if scope.borrow().exists(name) {
-                let value = expression(scope, expr)?;
-                scope.borrow_mut().assign(name, value.clone());
-                Ok(value)
-            } else {
-                Err(InterpreterError::RuntimeError(format!(
-                    "Undefined variable '{name}'."
-                )))
-            }
-        }
+        Expr::Assignment(name, expr) => assignment(scope, name, expr),
         Expr::Variable(name) => Ok(scope.borrow().get(name)?),
+        Expr::Logical { op, left, right } => logical(scope, op, left, right),
         Expr::Literal(literal) => Ok(literal.clone()),
         Expr::Grouping(inner) => expression(scope, inner),
         Expr::Unary { op, right } => unary(scope, op, right),
@@ -266,11 +279,39 @@ fn expression(scope: &Rc<RefCell<Scope>>, expr: &Expr) -> Result<Literal, Interp
     }
 }
 
-fn unary(
-    scope: &Rc<RefCell<Scope>>,
-    op: &UnaryOperator,
+fn assignment(scope: &RcScope, name: &String, expr: &Expr) -> Result<Literal, InterpreterError> {
+    if scope.borrow().exists(name) {
+        let value = expression(scope, expr)?;
+        scope.borrow_mut().assign(name, value.clone());
+        Ok(value)
+    } else {
+        Err(InterpreterError::RuntimeError(format!(
+            "Undefined variable '{name}'."
+        )))
+    }
+}
+
+fn logical(
+    scope: &RcScope,
+    op: &LogicalOperator,
+    left: &Expr,
     right: &Expr,
 ) -> Result<Literal, InterpreterError> {
+    let left_result = expression(scope, left)?;
+
+    let return_left = match op {
+        LogicalOperator::And => !bool::from(left_result.clone()),
+        LogicalOperator::Or => bool::from(left_result.clone()),
+    };
+
+    if return_left {
+        Ok(left_result)
+    } else {
+        Ok(expression(scope, right)?)
+    }
+}
+
+fn unary(scope: &RcScope, op: &UnaryOperator, right: &Expr) -> Result<Literal, InterpreterError> {
     let value = expression(scope, right)?;
 
     match op {
@@ -283,7 +324,7 @@ fn unary(
 }
 
 fn binary(
-    scope: &Rc<RefCell<Scope>>,
+    scope: &RcScope,
     op: &BinaryOperator,
     left: &Expr,
     right: &Expr,
@@ -511,7 +552,7 @@ mod eval_tests {
 }
 
 #[cfg(test)]
-mod run_tests {
+mod state_tests {
     fn happy_case(input: &str, expected: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
@@ -833,6 +874,140 @@ after",
 }"#,
             "88
 88",
+        );
+    }
+
+    #[test]
+    fn scopes() {
+        happy_case(
+            r#"var baz = (91 * 16) - 61;
+{
+    var world = "quz" + "89";
+    print world;
+}
+print baz;"#,
+            "quz89
+1395",
+        );
+
+        happy_case(
+            r#"{
+    var quz = "before";
+    {
+        var quz = "after";
+        print quz;
+    }
+    print quz;
+}"#,
+            "after
+before",
+        );
+
+        happy_case(
+            r#"var bar = "global bar";
+var world = "global world";
+var hello = "global hello";
+{
+  var bar = "outer bar";
+  var world = "outer world";
+  {
+    var bar = "inner bar";
+    print bar;
+    print world;
+    print hello;
+  }
+  print bar;
+  print world;
+  print hello;
+}
+print bar;
+print world;
+print hello;"#,
+            "inner bar
+outer world
+global hello
+outer bar
+outer world
+global hello
+global bar
+global world
+global hello",
+        );
+
+        sad_case(
+            r#"{
+  var hello = "outer hello";
+  {
+    var hello = "inner hello";
+    print hello;
+  }
+  print hello;
+}
+print hello;"#,
+        );
+    }
+}
+
+#[cfg(test)]
+mod control_flow_tests {
+    fn happy_case(input: &str, expected: &str) {
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = crate::parsing::Parser::new(tokens);
+        let (program, parse_errors) = parser.parse_program();
+        assert!(scan_errors.is_empty());
+        assert!(parse_errors.is_empty());
+
+        let mut buffer = super::Buffer::new();
+        let output = super::Output::Buffer(&mut buffer);
+        let mut interpreter = super::Interpreter::new();
+        interpreter.redirect_stdout(output);
+
+        assert!(interpreter.run(&program).is_ok());
+        assert_eq!(String::from(buffer), format!("{expected}\n"));
+    }
+
+    fn sad_case(input: &str) {
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = crate::parsing::Parser::new(tokens);
+        let (program, parse_errors) = parser.parse_program();
+        assert!(scan_errors.is_empty());
+        assert!(parse_errors.is_empty());
+
+        let result = super::Interpreter::new().run(&program);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn assignment_operation() {
+        happy_case(r#"if (true) print "bar";"#, "bar");
+
+        happy_case(
+            r#"if (true) {
+  print "block body";
+}"#,
+            "block body",
+        );
+
+        happy_case(
+            r#"var a = false;
+if (a = true) {
+  print (a == true);
+}"#,
+            "true",
+        );
+
+        happy_case(
+            r#"var stage = "unknown";
+var age = 50;
+if (age < 18) { stage = "child"; }
+if (age >= 18) { stage = "adult"; }
+print stage;
+
+var isAdult = age >= 18;
+if (isAdult) { print "eligible for voting: true"; }
+if (!isAdult) { print "eligible for voting: false"; }"#,
+            "adult
+eligible for voting: true",
         );
     }
 }
