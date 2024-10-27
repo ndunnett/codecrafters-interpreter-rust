@@ -150,7 +150,7 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Option<Statement> {
-        match self.peek().type_ {
+        let stmt = match self.peek().type_ {
             TokenType::Var => {
                 self.advance();
                 self.variable_declaration()
@@ -160,7 +160,13 @@ impl<'a> Parser<'a> {
                 self.print_stmt()
             }
             _ => self.expression_stmt(),
+        };
+
+        if !self.is_at_end() {
+            self.consume(&TokenType::Semicolon);
         }
+
+        stmt
     }
 
     fn variable_declaration(&mut self) -> Option<Statement> {
@@ -173,20 +179,15 @@ impl<'a> Parser<'a> {
             None
         };
 
-        self.consume(&TokenType::Semicolon);
         Some(Statement::VarDecl(name, initialiser))
     }
 
     fn print_stmt(&mut self) -> Option<Statement> {
-        let expr = self.expression()?;
-        self.consume(&TokenType::Semicolon);
-        Some(Statement::Print(expr))
+        Some(Statement::Print(self.expression()?))
     }
 
     fn expression_stmt(&mut self) -> Option<Statement> {
-        let expr = self.expression()?;
-        self.consume(&TokenType::Semicolon);
-        Some(Statement::Expr(expr))
+        Some(Statement::Expr(self.expression()?))
     }
 
     fn expression(&mut self) -> Option<Expr> {
@@ -198,7 +199,9 @@ impl<'a> Parser<'a> {
 
         if self.matches(&TokenType::Equal) {
             if let Some(Expr::Variable(name)) = expr {
-                if let Some(value) = self.assignment() {
+                self.advance();
+
+                if let Some(value) = self.expression() {
                     Some(Expr::Assignment(name, Box::new(value)))
                 } else {
                     self.add_error(ParserErrorType::InvalidAssignmentValue);

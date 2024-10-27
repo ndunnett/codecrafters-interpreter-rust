@@ -210,8 +210,8 @@ impl<'a> Interpreter<'a> {
             Expr::Assignment(name, expr) => {
                 if self.env.exists(name) {
                     let value = self.expression(expr)?;
-                    self.env.assign(name, value);
-                    Ok(Literal::Nil)
+                    self.env.assign(name, value.clone());
+                    Ok(value)
                 } else {
                     Err(InterpreterError::RuntimeError(format!(
                         "Undefined variable '{name}'."
@@ -616,6 +616,147 @@ print foo;",
 var baz = quz;
 print baz + quz;",
             "152",
+        );
+    }
+
+    #[test]
+    fn var_runtime_errors() {
+        sad_case(
+            "print 22;
+print x;",
+        );
+
+        sad_case(
+            "var baz = 96;
+print hello;",
+        );
+
+        sad_case(
+            "var hello = 85;
+var result = (hello + bar) / world;
+print result;",
+        );
+
+        sad_case(
+            "var quz = 20;
+var world = 51;
+var hello = 56;
+print quz + world + he",
+        );
+    }
+
+    #[test]
+    fn initialise_variables() {
+        happy_case(
+            r#"var baz = "foo";
+var bar;
+print bar;"#,
+            "nil",
+        );
+
+        happy_case(
+            r#"var baz = 69;
+var world;
+var quz;
+print world;"#,
+            "nil",
+        );
+
+        happy_case(
+            r#"var quz = 73 + 26 * 20;
+print quz;
+var hello = 26 * 20;
+print quz + hello;
+var foo;
+print foo;"#,
+            "593
+1113
+nil",
+        );
+    }
+
+    #[test]
+    fn redeclare_variables() {
+        happy_case(
+            r#"var baz = "before";
+print baz;
+var baz = "after";
+print baz;"#,
+            "before
+after",
+        );
+
+        happy_case(
+            r#"var hello = "after";
+var hello = "before";
+var hello = hello;
+print hello;"#,
+            "before",
+        );
+
+        happy_case(
+            r#"var world = 2;
+print world;
+var world = 3;
+print world;
+var hello = 5;
+print hello;
+var world = hello;
+print world;"#,
+            "2
+3
+5
+5",
+        );
+
+        sad_case("var baz = bar;");
+    }
+
+    #[test]
+    fn assignment_operation() {
+        happy_case(
+            r#"var quz;
+quz = 1;
+print quz;
+print quz = 2;
+print quz;"#,
+            "1
+2
+2",
+        );
+
+        happy_case(
+            r#"var hello = 93;
+var bar = 93;
+bar = hello;
+hello = bar;
+print hello + bar;"#,
+            "186",
+        );
+
+        happy_case(
+            r#"var quz;
+var hello;
+
+quz = hello = 16 + 34 * 92;
+print quz;
+print hello;"#,
+            "3144
+3144",
+        );
+
+        happy_case(
+            r#"var hello = 65;
+var baz;
+var quz;
+
+hello = baz = quz = hello * 2;
+print hello;
+print baz;
+print baz;"#,
+            "130
+130
+130",
         );
     }
 }
