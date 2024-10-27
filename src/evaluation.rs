@@ -1412,15 +1412,4 @@ after
 0",
         );
     }
-
-    #[test]
-    fn syntactic_errors() {
-        happy_case(r#""#, "");
-
-        happy_case(r#""#, "");
-
-        happy_case(r#""#, "");
-
-        happy_case(r#""#, "");
-    }
 }

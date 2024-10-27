@@ -59,7 +59,7 @@ impl<'a> Parser<'a> {
     pub fn parse_program(&mut self) -> (Vec<Statement>, Vec<ParserError>) {
         let mut program = Vec::new();
 
-        while let Some(stmt) = self.statement() {
+        while let Some(stmt) = self.declaration() {
             program.push(stmt);
 
             if self.is_at_end() {
@@ -150,10 +150,16 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn declaration(&mut self) -> Option<Statement> {
+        match self.peek().type_ {
+            TokenType::Var => self.variable_declaration(),
+            _ => self.statement(),
+        }
+    }
+
     fn statement(&mut self) -> Option<Statement> {
         match self.peek().type_ {
             TokenType::LeftBrace => self.block(),
-            TokenType::Var => self.variable_declaration(),
             TokenType::Print => self.print_statement(),
             TokenType::If => self.if_statement(),
             TokenType::While => self.while_statement(),
@@ -167,7 +173,7 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
 
         while !self.matches(&TokenType::RightBrace) && !self.is_at_end() {
-            stmts.push(self.statement()?);
+            stmts.push(self.declaration()?);
         }
 
         self.consume(&TokenType::RightBrace);
@@ -583,5 +589,13 @@ mod stmt_tests {
         print bar + world;
 }"#,
         );
+    }
+
+    #[test]
+    fn for_if_syntax() {
+        sad_case(r#"if (true) "ok"; else var foo;"#);
+        sad_case(r#"for (var a = 1; {}; a = a + 1) {}"#);
+        sad_case(r#"for (var a = 1; a < 2; {}) {}"#);
+        sad_case(r#"for ({}; a < 2; a = a + 1) {}"#);
     }
 }
