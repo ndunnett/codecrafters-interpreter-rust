@@ -58,7 +58,7 @@ impl<'a> Parser<'a> {
     pub fn parse_program(&mut self) -> (Vec<Statement>, Vec<ParserError>) {
         let mut program = Vec::new();
 
-        while let Some(stmt) = self.statement() {
+        while let Some(stmt) = self.block() {
             program.push(stmt);
 
             if self.is_at_end() {
@@ -146,6 +146,22 @@ impl<'a> Parser<'a> {
             if self.previous().type_ == TokenType::Semicolon {
                 break;
             }
+        }
+    }
+
+    fn block(&mut self) -> Option<Statement> {
+        if self.matches(&TokenType::LeftBrace) {
+            self.advance();
+            let mut stmts = Vec::new();
+
+            while !self.matches(&TokenType::RightBrace) && !self.is_at_end() {
+                stmts.push(self.block()?);
+            }
+
+            self.consume(&TokenType::RightBrace);
+            Some(Statement::Block(stmts))
+        } else {
+            self.statement()
         }
     }
 
@@ -418,5 +434,38 @@ mod expr_tests {
         let mut parser = super::Parser::new(tokens);
         let (_, errors) = parser.parse_program();
         assert!(!errors.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod stmt_tests {
+    fn happy_case(input: &str, expected: &str) {
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = super::Parser::new(tokens);
+        let (expr, parse_errors) = parser.parse_expression();
+        assert!(scan_errors.is_empty());
+        assert!(parse_errors.is_empty());
+        assert!(expr.is_some());
+        assert_eq!(format!("{:?}", expr.unwrap()), expected);
+    }
+
+    fn sad_case(input: &str) {
+        let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
+        let mut parser = super::Parser::new(tokens);
+        let (_, parse_errors) = parser.parse_expression();
+        assert!(scan_errors.is_empty());
+        assert!(!parse_errors.is_empty());
+    }
+
+    #[test]
+    fn block_syntax() {
+        sad_case(
+            r#"{
+    var bar = 11;
+    var world = 11;
+    {
+        print bar + world;
+}"#,
+        );
     }
 }

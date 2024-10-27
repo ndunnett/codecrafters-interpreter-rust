@@ -1,7 +1,9 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     fmt,
     io::{self, Write},
+    rc::Rc,
 };
 
 use crate::{
@@ -97,18 +99,28 @@ impl io::Write for Output<'_> {
 }
 
 #[derive(Default)]
-struct Environment {
+struct Scope {
+    parent: Option<Rc<RefCell<Scope>>>,
     values: HashMap<String, Literal>,
 }
 
-impl Environment {
-    pub fn new() -> Self {
-        Self::default()
+impl Scope {
+    pub fn new() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self::default()))
+    }
+
+    pub fn child_from(parent: &Rc<RefCell<Self>>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            parent: Some(parent.clone()),
+            ..Default::default()
+        }))
     }
 
     pub fn get(&self, name: &str) -> Result<Literal, InterpreterError> {
         if let Some(value) = self.values.get(name) {
             Ok(value.clone())
+        } else if let Some(parent) = &self.parent {
+            parent.borrow().get(name)
         } else {
             Err(InterpreterError::RuntimeError(format!(
                 "Undefined variable '{name}'."
@@ -116,19 +128,32 @@ impl Environment {
         }
     }
 
-    pub fn assign(&mut self, name: &str, value: Literal) {
+    pub fn define(&mut self, name: &str, value: Literal) {
         self.values.insert(String::from(name), value);
     }
 
-    pub fn exists(&mut self, name: &str) -> bool {
-        self.values.contains_key(name)
+    pub fn assign(&mut self, name: &str, value: Literal) {
+        if self.values.contains_key(name) {
+            self.values.insert(String::from(name), value);
+        } else if let Some(parent) = &mut self.parent {
+            parent.borrow_mut().assign(name, value);
+        }
+    }
+
+    pub fn exists(&self, name: &str) -> bool {
+        if self.values.contains_key(name) {
+            true
+        } else if let Some(parent) = &self.parent {
+            parent.borrow().exists(name)
+        } else {
+            false
+        }
     }
 }
 
 pub struct Interpreter<'a> {
     pub stdout: Output<'a>,
     pub stderr: Output<'a>,
-    env: Environment,
 }
 
 impl Default for Interpreter<'_> {
@@ -136,7 +161,6 @@ impl Default for Interpreter<'_> {
         Self {
             stdout: Output::Stdout(io::stdout()),
             stderr: Output::Stderr(io::stderr()),
-            env: Default::default(),
         }
     }
 }
@@ -158,7 +182,7 @@ impl<'a> Interpreter<'a> {
         let mut buffer = Buffer::new();
         let mut output = Output::Buffer(&mut buffer);
 
-        match self.expression(expr) {
+        match expression(&Scope::new(), expr) {
             Ok(result) => {
                 let _ = writeln!(output, "{result}");
                 Ok(buffer.into())
@@ -168,179 +192,194 @@ impl<'a> Interpreter<'a> {
     }
 
     pub fn run(&mut self, program: &[Statement]) -> Result<(), InterpreterError> {
+        let scope = Scope::new();
+
         for stmt in program {
-            self.statement(stmt)?;
+            self.statement(&scope, stmt)?;
         }
 
         Ok(())
     }
 
-    fn statement(&mut self, stmt: &Statement) -> Result<(), InterpreterError> {
+    fn statement(
+        &mut self,
+        scope: &Rc<RefCell<Scope>>,
+        stmt: &Statement,
+    ) -> Result<(), InterpreterError> {
         match stmt {
             Statement::VarDecl(name, expr) => {
                 if let Some(expr) = expr {
-                    match self.expression(expr) {
+                    match expression(scope, expr) {
                         Ok(result) => {
-                            self.env.assign(name, result);
+                            scope.borrow_mut().define(name, result);
                             Ok(())
                         }
                         Err(e) => Err(e),
                     }
                 } else {
-                    self.env.assign(name, Literal::Nil);
+                    scope.borrow_mut().define(name, Literal::Nil);
                     Ok(())
                 }
             }
-            Statement::Expr(expr) => match self.expression(expr) {
+            Statement::Expr(expr) => match expression(scope, expr) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e),
             },
-            Statement::Print(expr) => match self.expression(expr) {
+            Statement::Print(expr) => match expression(scope, expr) {
                 Ok(result) => {
                     let _ = writeln!(self.stdout, "{result}");
                     Ok(())
                 }
                 Err(e) => Err(e),
             },
-        }
-    }
+            Statement::Block(stmts) => {
+                let child_scope = Scope::child_from(scope);
 
-    fn expression(&mut self, expr: &Expr) -> Result<Literal, InterpreterError> {
-        match expr {
-            Expr::Assignment(name, expr) => {
-                if self.env.exists(name) {
-                    let value = self.expression(expr)?;
-                    self.env.assign(name, value.clone());
-                    Ok(value)
-                } else {
-                    Err(InterpreterError::RuntimeError(format!(
-                        "Undefined variable '{name}'."
-                    )))
+                for stmt in stmts {
+                    self.statement(&child_scope, stmt)?;
                 }
+
+                Ok(())
             }
-            Expr::Variable(name) => Ok(self.env.get(name)?),
-            Expr::Literal(literal) => Ok(literal.clone()),
-            Expr::Grouping(inner) => self.expression(inner),
-            Expr::Unary { op, right } => self.unary(op, right),
-            Expr::Binary { op, left, right } => self.binary(op, left, right),
         }
     }
+}
 
-    fn unary(&mut self, op: &UnaryOperator, right: &Expr) -> Result<Literal, InterpreterError> {
-        let value = self.expression(right)?;
-
-        match op {
-            UnaryOperator::Negation => Ok(Literal::Boolean(!bool::from(value))),
-            UnaryOperator::Negative => match value {
-                Literal::Number(a) => Ok(Literal::Number(-a)),
-                _ => Err(InterpreterError::TypeError("Expected a number.".into())),
-            },
-        }
-    }
-
-    fn binary(
-        &mut self,
-        op: &BinaryOperator,
-        left: &Expr,
-        right: &Expr,
-    ) -> Result<Literal, InterpreterError> {
-        let left_val = self.expression(left)?;
-        let right_val = self.expression(right)?;
-
-        match op {
-            BinaryOperator::Addition => self.add(left_val, right_val),
-            BinaryOperator::Subtraction => self.subtract(left_val, right_val),
-            BinaryOperator::Multiplication => self.multiply(left_val, right_val),
-            BinaryOperator::Division => self.divide(left_val, right_val),
-            BinaryOperator::Equality | BinaryOperator::NonEquality => {
-                self.equality(op, left_val, right_val)
+fn expression(scope: &Rc<RefCell<Scope>>, expr: &Expr) -> Result<Literal, InterpreterError> {
+    match expr {
+        Expr::Assignment(name, expr) => {
+            if scope.borrow().exists(name) {
+                let value = expression(scope, expr)?;
+                scope.borrow_mut().assign(name, value.clone());
+                Ok(value)
+            } else {
+                Err(InterpreterError::RuntimeError(format!(
+                    "Undefined variable '{name}'."
+                )))
             }
-            BinaryOperator::GreaterThan
-            | BinaryOperator::GreaterThanEqual
-            | BinaryOperator::LessThan
-            | BinaryOperator::LessThanEqual => self.comparison(op, left_val, right_val),
         }
+        Expr::Variable(name) => Ok(scope.borrow().get(name)?),
+        Expr::Literal(literal) => Ok(literal.clone()),
+        Expr::Grouping(inner) => expression(scope, inner),
+        Expr::Unary { op, right } => unary(scope, op, right),
+        Expr::Binary { op, left, right } => binary(scope, op, left, right),
     }
+}
 
-    fn add(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-        match (left, right) {
-            (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a + b)),
-            (Literal::String(a), Literal::String(b)) => Ok(Literal::String(a + &b)),
-            _ => Err(InterpreterError::TypeError(
-                "Expected either two strings or two numbers for addition.".into(),
-            )),
-        }
+fn unary(
+    scope: &Rc<RefCell<Scope>>,
+    op: &UnaryOperator,
+    right: &Expr,
+) -> Result<Literal, InterpreterError> {
+    let value = expression(scope, right)?;
+
+    match op {
+        UnaryOperator::Negation => Ok(Literal::Boolean(!bool::from(value))),
+        UnaryOperator::Negative => match value {
+            Literal::Number(a) => Ok(Literal::Number(-a)),
+            _ => Err(InterpreterError::TypeError("Expected a number.".into())),
+        },
     }
+}
 
-    fn subtract(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-        match (left, right) {
-            (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a - b)),
-            _ => Err(InterpreterError::TypeError(
-                "Expected two numbers for subtraction.".into(),
-            )),
-        }
+fn binary(
+    scope: &Rc<RefCell<Scope>>,
+    op: &BinaryOperator,
+    left: &Expr,
+    right: &Expr,
+) -> Result<Literal, InterpreterError> {
+    let left_val = expression(scope, left)?;
+    let right_val = expression(scope, right)?;
+
+    match op {
+        BinaryOperator::Addition => add(left_val, right_val),
+        BinaryOperator::Subtraction => subtract(left_val, right_val),
+        BinaryOperator::Multiplication => multiply(left_val, right_val),
+        BinaryOperator::Division => divide(left_val, right_val),
+        BinaryOperator::Equality | BinaryOperator::NonEquality => equality(op, left_val, right_val),
+        BinaryOperator::GreaterThan
+        | BinaryOperator::GreaterThanEqual
+        | BinaryOperator::LessThan
+        | BinaryOperator::LessThanEqual => comparison(op, left_val, right_val),
     }
+}
 
-    fn multiply(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-        match (left, right) {
-            (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a * b)),
-            _ => Err(InterpreterError::TypeError(
-                "Expected two numbers for multiplication.".into(),
-            )),
-        }
+fn add(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+    match (left, right) {
+        (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a + b)),
+        (Literal::String(a), Literal::String(b)) => Ok(Literal::String(a + &b)),
+        _ => Err(InterpreterError::TypeError(
+            "Expected either two strings or two numbers for addition.".into(),
+        )),
     }
+}
 
-    fn divide(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-        match (left, right) {
-            (Literal::Number(a), Literal::Number(b)) => {
-                if b == 0. {
-                    Err(InterpreterError::RuntimeError("Divide by zero.".into()))
-                } else {
-                    Ok(Literal::Number(a / b))
-                }
+fn subtract(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+    match (left, right) {
+        (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a - b)),
+        _ => Err(InterpreterError::TypeError(
+            "Expected two numbers for subtraction.".into(),
+        )),
+    }
+}
+
+fn multiply(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+    match (left, right) {
+        (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a * b)),
+        _ => Err(InterpreterError::TypeError(
+            "Expected two numbers for multiplication.".into(),
+        )),
+    }
+}
+
+fn divide(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+    match (left, right) {
+        (Literal::Number(a), Literal::Number(b)) => {
+            if b == 0. {
+                Err(InterpreterError::RuntimeError("Divide by zero.".into()))
+            } else {
+                Ok(Literal::Number(a / b))
             }
-            _ => Err(InterpreterError::TypeError(
-                "Expected two numbers for division.".into(),
-            )),
         }
+        _ => Err(InterpreterError::TypeError(
+            "Expected two numbers for division.".into(),
+        )),
     }
+}
 
-    fn equality(
-        &self,
-        op: &BinaryOperator,
-        left: Literal,
-        right: Literal,
-    ) -> Result<Literal, InterpreterError> {
-        match op {
-            BinaryOperator::Equality => Ok(Literal::Boolean(left == right)),
-            BinaryOperator::NonEquality => Ok(Literal::Boolean(left != right)),
-            _ => unreachable!(),
-        }
+fn equality(
+    op: &BinaryOperator,
+    left: Literal,
+    right: Literal,
+) -> Result<Literal, InterpreterError> {
+    match op {
+        BinaryOperator::Equality => Ok(Literal::Boolean(left == right)),
+        BinaryOperator::NonEquality => Ok(Literal::Boolean(left != right)),
+        _ => unreachable!(),
     }
+}
 
-    fn comparison(
-        &self,
-        op: &BinaryOperator,
-        left: Literal,
-        right: Literal,
-    ) -> Result<Literal, InterpreterError> {
-        match (op, left, right) {
-            (BinaryOperator::GreaterThan, Literal::Number(a), Literal::Number(b)) => {
-                Ok(Literal::Boolean(a > b))
-            }
-            (BinaryOperator::GreaterThanEqual, Literal::Number(a), Literal::Number(b)) => {
-                Ok(Literal::Boolean(a >= b))
-            }
-            (BinaryOperator::LessThan, Literal::Number(a), Literal::Number(b)) => {
-                Ok(Literal::Boolean(a < b))
-            }
-            (BinaryOperator::LessThanEqual, Literal::Number(a), Literal::Number(b)) => {
-                Ok(Literal::Boolean(a <= b))
-            }
-            _ => Err(InterpreterError::TypeError(
-                "Expected two numbers for comparison.".into(),
-            )),
+fn comparison(
+    op: &BinaryOperator,
+    left: Literal,
+    right: Literal,
+) -> Result<Literal, InterpreterError> {
+    match (op, left, right) {
+        (BinaryOperator::GreaterThan, Literal::Number(a), Literal::Number(b)) => {
+            Ok(Literal::Boolean(a > b))
         }
+        (BinaryOperator::GreaterThanEqual, Literal::Number(a), Literal::Number(b)) => {
+            Ok(Literal::Boolean(a >= b))
+        }
+        (BinaryOperator::LessThan, Literal::Number(a), Literal::Number(b)) => {
+            Ok(Literal::Boolean(a < b))
+        }
+        (BinaryOperator::LessThanEqual, Literal::Number(a), Literal::Number(b)) => {
+            Ok(Literal::Boolean(a <= b))
+        }
+        _ => Err(InterpreterError::TypeError(
+            "Expected two numbers for comparison.".into(),
+        )),
     }
 }
 
@@ -757,6 +796,43 @@ print baz;"#,
             "130
 130
 130",
+        );
+    }
+
+    #[test]
+    fn block_syntax() {
+        happy_case(
+            r#"{
+    var hello = "baz";
+    print hello;
+}"#,
+            "baz",
+        );
+
+        happy_case(
+            r#"{
+    var world = "before";
+    print world;
+}
+{
+    var world = "after";
+    print world;
+}"#,
+            "before
+after",
+        );
+
+        happy_case(
+            r#"{
+    var hello = 88;
+    {
+        var foo = 88;
+        print foo;
+    }
+    print hello;
+}"#,
+            "88
+88",
         );
     }
 }

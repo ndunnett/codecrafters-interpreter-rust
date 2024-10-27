@@ -81,6 +81,7 @@ pub enum Statement {
     VarDecl(String, Option<Expr>),
     Expr(Expr),
     Print(Expr),
+    Block(Vec<Statement>),
 }
 
 impl fmt::Debug for Statement {
@@ -95,6 +96,15 @@ impl fmt::Debug for Statement {
             }
             Self::Expr(expr) => write!(f, "{expr:?}"),
             Self::Print(expr) => write!(f, "(print {expr:?})"),
+            Self::Block(stmts) => write!(
+                f,
+                "(block {})",
+                stmts
+                    .iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 }
@@ -111,6 +121,15 @@ impl fmt::Display for Statement {
             }
             Self::Expr(expr) => write!(f, "{expr}"),
             Self::Print(expr) => write!(f, "(print {expr})"),
+            Self::Block(stmts) => write!(
+                f,
+                "(block {})",
+                stmts
+                    .iter()
+                    .map(|s| format!("{s}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 }
