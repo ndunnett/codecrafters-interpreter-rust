@@ -232,16 +232,16 @@ impl<'a> Parser<'a> {
         self.advance();
         self.consume(&TokenType::LeftParen);
 
-        let mut body = Vec::new();
+        let mut block = Vec::new();
 
         if self.matches(&TokenType::Semicolon) {
             self.advance();
         } else if self.matches(&TokenType::Var) {
             if let Some(decl) = self.variable_declaration() {
-                body.push(decl);
+                block.push(decl);
             }
         } else if let Some(decl) = self.expression_statement() {
-            body.push(decl);
+            block.push(decl);
         }
 
         let condition = if self.matches(&TokenType::Semicolon) {
@@ -255,25 +255,25 @@ impl<'a> Parser<'a> {
         .unwrap_or(Expr::Literal(Literal::Boolean(true)));
 
         let increment = if self.matches(&TokenType::RightParen) {
-            self.advance();
             None
         } else {
-            let expr = self.expression().map(Statement::Expr);
-            self.consume(&TokenType::RightParen);
-            expr
+            self.expression().map(Statement::Expr)
         };
 
+        self.consume(&TokenType::RightParen);
+        let mut body = Vec::new();
         body.push(self.statement()?);
 
         if let Some(increment) = increment {
             body.push(increment);
         }
 
-        self.consume(&TokenType::RightParen);
-        Some(Statement::While(
+        block.push(Statement::While(
             condition,
             Box::new(Statement::Block(body)),
-        ))
+        ));
+
+        Some(Statement::Block(block))
     }
 
     fn expression_statement(&mut self) -> Option<Statement> {

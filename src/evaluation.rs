@@ -978,7 +978,7 @@ mod control_flow_tests {
     }
 
     #[test]
-    fn assignment_operation() {
+    fn if_statements() {
         happy_case(r#"if (true) print "bar";"#, "bar");
 
         happy_case(
@@ -1009,5 +1009,418 @@ if (!isAdult) { print "eligible for voting: false"; }"#,
             "adult
 eligible for voting: true",
         );
+    }
+
+    #[test]
+    fn else_statements() {
+        happy_case(
+            r#"if (true) print "if branch"; else print "else branch";"#,
+            "if branch",
+        );
+
+        happy_case(
+            r#"var age = 21;
+if (age > 18) print "adult"; else print "child";"#,
+            "adult",
+        );
+
+        happy_case(
+            r#"if (false) {
+  print "if block";
+} else print "else statement";
+
+if (false) print "if statement"; else {
+  print "else block";
+}"#,
+            "else statement
+else block",
+        );
+
+        happy_case(
+            r#"var celsius = 67;
+var fahrenheit = 0;
+var isHot = false;
+
+{
+  fahrenheit = celsius * 9 / 5 + 32;
+  print celsius; print fahrenheit;
+
+  if (celsius > 30) {
+    isHot = true;
+    print "It's a hot day. Stay hydrated!";
+  } else {
+    print "It's cold today. Wear a jacket!";
+  }
+
+  if (isHot) { print "Remember to use sunscreen!"; }
+}"#,
+            "67
+152.6
+It's a hot day. Stay hydrated!
+Remember to use sunscreen!",
+        );
+    }
+
+    #[test]
+    fn else_if_statements() {
+        happy_case(
+            r#"if (true) print "if branch"; else if (false) print "else-if branch";"#,
+            "if branch",
+        );
+
+        happy_case(
+            r#"if (true) {
+  print "hello";
+} else if (true) print "hello";
+
+if (true) print "hello"; else if (true) {
+  print "hello";
+}"#,
+            "hello
+hello",
+        );
+
+        happy_case(
+            r#"var age = 88;
+var stage = "unknown";
+if (age < 18) { stage = "child"; }
+else if (age >= 18) { stage = "adult"; }
+else if (age >= 65) { stage = "senior"; }
+else if (age >= 100) { stage = "centenarian"; }
+print stage;"#,
+            "adult",
+        );
+
+        happy_case(
+            r#"var age = 67;
+
+var isAdult = age >= 18;
+if (isAdult) { print "eligible for voting: true"; }
+else { print "eligible for voting: false"; }
+
+if (age < 16) { print "eligible for driving: false"; }
+else if (age < 18) { print "eligible for driving: learner's permit"; }
+else { print "eligible for driving: full license"; }
+
+if (age < 21) { print "eligible for drinking (US): false"; }
+else { print "eligible for drinking (US): true"; }"#,
+            "eligible for voting: true
+eligible for driving: full license
+eligible for drinking (US): true",
+        );
+    }
+
+    #[test]
+    fn nested_if_statements() {
+        happy_case(r#"if (true) if (true) print "nested true";"#, "nested true");
+
+        happy_case(
+            r#"if (true) {
+  if (false) print "quz"; else print "quz";
+}"#,
+            "quz",
+        );
+
+        happy_case(
+            r#"var stage = "unknown";
+var age = 29;
+if (age < 18) {
+    if (age < 13) { stage = "child"; }
+    else if (age < 16) { stage = "young teenager"; }
+    else { stage = "teenager"; }
+}
+else if (age < 65) {
+    if (age < 30) { stage = "young adult"; }
+    else if (age < 50) { stage = "adult"; }
+    else { stage = "middle-aged adult"; }
+}
+else { stage = "senior"; }
+print stage;
+
+var isAdult = age >= 18;
+if (isAdult) {
+    print "eligible for voting: true";
+    if (age < 25) {
+        print "first-time voter: likely";
+    }
+    else { print "first-time voter: unlikely"; }
+}
+else { print "eligible for voting: false"; }
+
+if (age < 16) { print "eligible for driving: false"; }
+else if (age < 18) {
+    print "eligible for driving: learner's permit";
+    if (age < 17) { print "supervised driving required"; }
+    else { print "unsupervised driving allowed with restrictions"; }
+}
+else { print "eligible for driving: full license"; }
+
+if (age < 21) { print "eligible for drinking (US): false"; }
+else {
+    print "eligible for drinking (US): true";
+    if (age < 25) { print "remember: drink responsibly!"; }
+}"#,
+            "young adult
+eligible for voting: true
+first-time voter: unlikely
+eligible for driving: full license
+eligible for drinking (US): true",
+        );
+
+        happy_case(
+            r#"if (true) if (false) print "world"; else print "baz";"#,
+            "baz",
+        );
+    }
+
+    #[test]
+    fn logical_or() {
+        happy_case(
+            r#"if (false or "ok") print "baz";
+if (nil or "ok") print "baz";
+
+if (false or false) print "world";
+if (true or "world") print "world";
+
+if (24 or "bar") print "bar";
+if ("bar" or "bar") print "bar";"#,
+            "baz
+baz
+world
+bar
+bar",
+        );
+
+        happy_case(
+            r#"print 41 or true;
+print false or 41;
+print false or false or true;
+
+print false or false;
+print false or false or false;
+print true or true or true or true;"#,
+            "41
+41
+true
+false
+false
+true",
+        );
+
+        happy_case(
+            r#"var a = "hello";
+var b = "hello";
+(a = false) or (b = true) or (a = "hello");
+print a;
+print b;"#,
+            "false
+true",
+        );
+
+        happy_case(
+            r#"var stage = "unknown";
+var age = 23;
+if (age < 18) { stage = "child"; }
+if (age >= 18) { stage = "adult"; }
+print stage;
+
+var isAdult = age >= 18;
+if (isAdult) { print "eligible for voting: true"; }
+if (!isAdult) { print "eligible for voting: false"; }"#,
+            "adult
+eligible for voting: true",
+        );
+    }
+
+    #[test]
+    fn logical_and() {
+        happy_case(
+            r#"if (false and "bad") print "foo";
+if (nil and "bad") print "foo";
+
+if (true and "hello") print "hello";
+if (97 and "baz") print "baz";
+if ("baz" and "baz") print "baz";
+if ("" and "bar") print "bar";"#,
+            "hello
+baz
+baz
+bar",
+        );
+
+        happy_case(
+            r#"print false and 1;
+print true and 1;
+print 23 and "hello" and false;
+
+print 23 and true;
+print 23 and "hello" and 23;"#,
+            "false
+1
+false
+true
+23",
+        );
+
+        happy_case(
+            r#"var a = "quz";
+var b = "quz";
+(a = true) and (b = false) and (a = "bad");
+print a;
+print b;"#,
+            "true
+false",
+        );
+
+        happy_case(
+            r#"var stage = "unknown";
+var age = 14;
+if (age < 18) { stage = "child"; }
+if (age >= 18) { stage = "adult"; }
+print stage;
+
+var isAdult = age >= 18;
+if (isAdult) { print "eligible for voting: true"; }
+if (!isAdult) { print "eligible for voting: false"; }"#,
+            "child
+eligible for voting: false",
+        );
+    }
+
+    #[test]
+    fn while_statements() {
+        happy_case(
+            r#"var foo = 0;
+while (foo < 3) print foo = foo + 1;"#,
+            "1
+2
+3",
+        );
+
+        happy_case(
+            r#"var quz = 0;
+while (quz < 3) {
+  print quz;
+  quz = quz + 1;
+}"#,
+            "0
+1
+2",
+        );
+
+        happy_case(
+            r#"while (false) {
+  print "should not print";
+}
+
+var product = 1;
+var i = 1;
+
+while (i <= 5) {
+  product = product * i;
+  i = i + 1;
+}
+
+print "Product of numbers 1 to 5: "; print product;"#,
+            "Product of numbers 1 to 5: 
+120",
+        );
+
+        happy_case(
+            r#"var n = 10;
+var fm = 0;
+var fn = 1;
+var index = 0;
+
+while (index < n) {
+  print fm;
+  var temp = fm;
+  fm = fn;
+  fn = temp + fn;
+  index = index + 1;
+}"#,
+            "0
+1
+1
+2
+3
+5
+8
+13
+21
+34",
+        );
+    }
+
+    #[test]
+    fn for_statements() {
+        happy_case(
+            r#"for (var baz = 0; baz < 3;) print baz = baz + 1;"#,
+            "1
+2
+3",
+        );
+
+        happy_case(
+            r#"for (var world = 0; world < 3; world = world + 1) {
+  print world;
+}"#,
+            "0
+1
+2",
+        );
+
+        happy_case(
+            r#"var world = 0;
+for (; world < 2; world = world + 1) print world;
+
+for (var foo = 0; foo < 2;) {
+  print foo;
+  foo = foo + 1;
+}"#,
+            "0
+1
+0
+1",
+        );
+
+        happy_case(
+            r#"var quz = "after";
+{
+  var quz = "before";
+
+  for (var quz = 0; quz < 1; quz = quz + 1) {
+    print quz;
+    var quz = -1;
+    print quz;
+  }
+}
+
+{
+  for (var quz = 0; quz > 0; quz = quz + 1) {}
+
+  var quz = "after";
+  print quz;
+
+  for (quz = 0; quz < 1; quz = quz + 1) {
+    print quz;
+  }
+}"#,
+            "0
+-1
+after
+0",
+        );
+    }
+
+    #[test]
+    fn syntactic_errors() {
+        happy_case(r#""#, "");
+
+        happy_case(r#""#, "");
+
+        happy_case(r#""#, "");
+
+        happy_case(r#""#, "");
     }
 }
