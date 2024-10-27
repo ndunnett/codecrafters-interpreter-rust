@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt,
     io::{self, Write},
 };
@@ -95,9 +96,39 @@ impl io::Write for Output<'_> {
     }
 }
 
+#[derive(Default)]
+struct Environment {
+    values: HashMap<String, Literal>,
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, name: &str) -> Result<Literal, InterpreterError> {
+        if let Some(value) = self.values.get(name) {
+            Ok(value.clone())
+        } else {
+            Err(InterpreterError::RuntimeError(format!(
+                "Undefined variable '{name}'."
+            )))
+        }
+    }
+
+    pub fn assign(&mut self, name: &str, value: Literal) {
+        self.values.insert(String::from(name), value);
+    }
+
+    pub fn exists(&mut self, name: &str) -> bool {
+        self.values.contains_key(name)
+    }
+}
+
 pub struct Interpreter<'a> {
     pub stdout: Output<'a>,
     pub stderr: Output<'a>,
+    env: Environment,
 }
 
 impl Default for Interpreter<'_> {
@@ -105,6 +136,7 @@ impl Default for Interpreter<'_> {
         Self {
             stdout: Output::Stdout(io::stdout()),
             stderr: Output::Stderr(io::stderr()),
+            env: Default::default(),
         }
     }
 }
@@ -122,25 +154,17 @@ impl<'a> Interpreter<'a> {
         self.stderr = output;
     }
 
-    pub fn evaluate(&self, program: &[Statement]) -> Result<String, InterpreterError> {
+    pub fn evaluate(&mut self, expr: &Expr) -> Result<String, InterpreterError> {
         let mut buffer = Buffer::new();
         let mut output = Output::Buffer(&mut buffer);
 
-        for stmt in program {
-            let _ = match stmt {
-                Statement::Expr(expr) => match expression(expr) {
-                    Ok(result) => writeln!(output, "{result}"),
-                    Err(e) => return Err(e),
-                },
-                Statement::Print(_) => {
-                    return Err(InterpreterError::RuntimeError(
-                        "Evaluation mode only supports simple expressions.".into(),
-                    ))
-                }
-            };
+        match self.expression(expr) {
+            Ok(result) => {
+                let _ = writeln!(output, "{result}");
+                Ok(buffer.into())
+            }
+            Err(e) => Err(e),
         }
-
-        Ok(buffer.into())
     }
 
     pub fn run(&mut self, program: &[Statement]) -> Result<(), InterpreterError> {
@@ -153,11 +177,25 @@ impl<'a> Interpreter<'a> {
 
     fn statement(&mut self, stmt: &Statement) -> Result<(), InterpreterError> {
         match stmt {
-            Statement::Expr(expr) => match expression(expr) {
+            Statement::VarDecl(name, expr) => {
+                if let Some(expr) = expr {
+                    match self.expression(expr) {
+                        Ok(result) => {
+                            self.env.assign(name, result);
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    self.env.assign(name, Literal::Nil);
+                    Ok(())
+                }
+            }
+            Statement::Expr(expr) => match self.expression(expr) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e),
             },
-            Statement::Print(expr) => match expression(expr) {
+            Statement::Print(expr) => match self.expression(expr) {
                 Ok(result) => {
                     let _ = writeln!(self.stdout, "{result}");
                     Ok(())
@@ -166,122 +204,143 @@ impl<'a> Interpreter<'a> {
             },
         }
     }
-}
 
-fn expression(expr: &Expr) -> Result<Literal, InterpreterError> {
-    match expr {
-        Expr::Literal(literal) => Ok(literal.clone()),
-        Expr::Grouping(inner) => expression(inner),
-        Expr::Unary { op, right } => unary(op, right),
-        Expr::Binary { op, left, right } => binary(op, left, right),
-    }
-}
-
-fn unary(op: &UnaryOperator, right: &Expr) -> Result<Literal, InterpreterError> {
-    let value = expression(right)?;
-
-    match op {
-        UnaryOperator::Negation => Ok(Literal::Boolean(!bool::from(value))),
-        UnaryOperator::Negative => match value {
-            Literal::Number(a) => Ok(Literal::Number(-a)),
-            _ => Err(InterpreterError::TypeError("Expected a number.".into())),
-        },
-    }
-}
-
-fn binary(op: &BinaryOperator, left: &Expr, right: &Expr) -> Result<Literal, InterpreterError> {
-    let left_val = expression(left)?;
-    let right_val = expression(right)?;
-
-    match op {
-        BinaryOperator::Addition => add(left_val, right_val),
-        BinaryOperator::Subtraction => subtract(left_val, right_val),
-        BinaryOperator::Multiplication => multiply(left_val, right_val),
-        BinaryOperator::Division => divide(left_val, right_val),
-        BinaryOperator::Equality | BinaryOperator::NonEquality => equality(op, left_val, right_val),
-        BinaryOperator::GreaterThan
-        | BinaryOperator::GreaterThanEqual
-        | BinaryOperator::LessThan
-        | BinaryOperator::LessThanEqual => comparison(op, left_val, right_val),
-    }
-}
-
-fn add(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-    match (left, right) {
-        (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a + b)),
-        (Literal::String(a), Literal::String(b)) => Ok(Literal::String(a + &b)),
-        _ => Err(InterpreterError::TypeError(
-            "Expected either two strings or two numbers for addition.".into(),
-        )),
-    }
-}
-
-fn subtract(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-    match (left, right) {
-        (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a - b)),
-        _ => Err(InterpreterError::TypeError(
-            "Expected two numbers for subtraction.".into(),
-        )),
-    }
-}
-
-fn multiply(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-    match (left, right) {
-        (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a * b)),
-        _ => Err(InterpreterError::TypeError(
-            "Expected two numbers for multiplication.".into(),
-        )),
-    }
-}
-
-fn divide(left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
-    match (left, right) {
-        (Literal::Number(a), Literal::Number(b)) => {
-            if b == 0. {
-                Err(InterpreterError::RuntimeError("Divide by zero.".into()))
-            } else {
-                Ok(Literal::Number(a / b))
+    fn expression(&mut self, expr: &Expr) -> Result<Literal, InterpreterError> {
+        match expr {
+            Expr::Assignment(name, expr) => {
+                if self.env.exists(name) {
+                    let value = self.expression(expr)?;
+                    self.env.assign(name, value);
+                    Ok(Literal::Nil)
+                } else {
+                    Err(InterpreterError::RuntimeError(format!(
+                        "Undefined variable '{name}'."
+                    )))
+                }
             }
+            Expr::Variable(name) => Ok(self.env.get(name)?),
+            Expr::Literal(literal) => Ok(literal.clone()),
+            Expr::Grouping(inner) => self.expression(inner),
+            Expr::Unary { op, right } => self.unary(op, right),
+            Expr::Binary { op, left, right } => self.binary(op, left, right),
         }
-        _ => Err(InterpreterError::TypeError(
-            "Expected two numbers for division.".into(),
-        )),
     }
-}
 
-fn equality(
-    op: &BinaryOperator,
-    left: Literal,
-    right: Literal,
-) -> Result<Literal, InterpreterError> {
-    match op {
-        BinaryOperator::Equality => Ok(Literal::Boolean(left == right)),
-        BinaryOperator::NonEquality => Ok(Literal::Boolean(left != right)),
-        _ => unreachable!(),
+    fn unary(&mut self, op: &UnaryOperator, right: &Expr) -> Result<Literal, InterpreterError> {
+        let value = self.expression(right)?;
+
+        match op {
+            UnaryOperator::Negation => Ok(Literal::Boolean(!bool::from(value))),
+            UnaryOperator::Negative => match value {
+                Literal::Number(a) => Ok(Literal::Number(-a)),
+                _ => Err(InterpreterError::TypeError("Expected a number.".into())),
+            },
+        }
     }
-}
 
-fn comparison(
-    op: &BinaryOperator,
-    left: Literal,
-    right: Literal,
-) -> Result<Literal, InterpreterError> {
-    match (op, left, right) {
-        (BinaryOperator::GreaterThan, Literal::Number(a), Literal::Number(b)) => {
-            Ok(Literal::Boolean(a > b))
+    fn binary(
+        &mut self,
+        op: &BinaryOperator,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<Literal, InterpreterError> {
+        let left_val = self.expression(left)?;
+        let right_val = self.expression(right)?;
+
+        match op {
+            BinaryOperator::Addition => self.add(left_val, right_val),
+            BinaryOperator::Subtraction => self.subtract(left_val, right_val),
+            BinaryOperator::Multiplication => self.multiply(left_val, right_val),
+            BinaryOperator::Division => self.divide(left_val, right_val),
+            BinaryOperator::Equality | BinaryOperator::NonEquality => {
+                self.equality(op, left_val, right_val)
+            }
+            BinaryOperator::GreaterThan
+            | BinaryOperator::GreaterThanEqual
+            | BinaryOperator::LessThan
+            | BinaryOperator::LessThanEqual => self.comparison(op, left_val, right_val),
         }
-        (BinaryOperator::GreaterThanEqual, Literal::Number(a), Literal::Number(b)) => {
-            Ok(Literal::Boolean(a >= b))
+    }
+
+    fn add(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+        match (left, right) {
+            (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a + b)),
+            (Literal::String(a), Literal::String(b)) => Ok(Literal::String(a + &b)),
+            _ => Err(InterpreterError::TypeError(
+                "Expected either two strings or two numbers for addition.".into(),
+            )),
         }
-        (BinaryOperator::LessThan, Literal::Number(a), Literal::Number(b)) => {
-            Ok(Literal::Boolean(a < b))
+    }
+
+    fn subtract(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+        match (left, right) {
+            (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a - b)),
+            _ => Err(InterpreterError::TypeError(
+                "Expected two numbers for subtraction.".into(),
+            )),
         }
-        (BinaryOperator::LessThanEqual, Literal::Number(a), Literal::Number(b)) => {
-            Ok(Literal::Boolean(a <= b))
+    }
+
+    fn multiply(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+        match (left, right) {
+            (Literal::Number(a), Literal::Number(b)) => Ok(Literal::Number(a * b)),
+            _ => Err(InterpreterError::TypeError(
+                "Expected two numbers for multiplication.".into(),
+            )),
         }
-        _ => Err(InterpreterError::TypeError(
-            "Expected two numbers for comparison.".into(),
-        )),
+    }
+
+    fn divide(&self, left: Literal, right: Literal) -> Result<Literal, InterpreterError> {
+        match (left, right) {
+            (Literal::Number(a), Literal::Number(b)) => {
+                if b == 0. {
+                    Err(InterpreterError::RuntimeError("Divide by zero.".into()))
+                } else {
+                    Ok(Literal::Number(a / b))
+                }
+            }
+            _ => Err(InterpreterError::TypeError(
+                "Expected two numbers for division.".into(),
+            )),
+        }
+    }
+
+    fn equality(
+        &self,
+        op: &BinaryOperator,
+        left: Literal,
+        right: Literal,
+    ) -> Result<Literal, InterpreterError> {
+        match op {
+            BinaryOperator::Equality => Ok(Literal::Boolean(left == right)),
+            BinaryOperator::NonEquality => Ok(Literal::Boolean(left != right)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn comparison(
+        &self,
+        op: &BinaryOperator,
+        left: Literal,
+        right: Literal,
+    ) -> Result<Literal, InterpreterError> {
+        match (op, left, right) {
+            (BinaryOperator::GreaterThan, Literal::Number(a), Literal::Number(b)) => {
+                Ok(Literal::Boolean(a > b))
+            }
+            (BinaryOperator::GreaterThanEqual, Literal::Number(a), Literal::Number(b)) => {
+                Ok(Literal::Boolean(a >= b))
+            }
+            (BinaryOperator::LessThan, Literal::Number(a), Literal::Number(b)) => {
+                Ok(Literal::Boolean(a < b))
+            }
+            (BinaryOperator::LessThanEqual, Literal::Number(a), Literal::Number(b)) => {
+                Ok(Literal::Boolean(a <= b))
+            }
+            _ => Err(InterpreterError::TypeError(
+                "Expected two numbers for comparison.".into(),
+            )),
+        }
     }
 }
 
@@ -290,11 +349,12 @@ mod eval_tests {
     fn happy_case(input: &str, expected: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
-        let (program, parse_errors) = parser.parse();
+        let (expr, parse_errors) = parser.parse_expression();
         assert!(scan_errors.is_empty());
         assert!(parse_errors.is_empty());
+        assert!(expr.is_some());
 
-        let result = super::Interpreter::new().evaluate(&program);
+        let result = super::Interpreter::new().evaluate(&expr.unwrap());
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), format!("{expected}\n"));
     }
@@ -302,12 +362,12 @@ mod eval_tests {
     fn sad_case(input: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
-        let (program, parse_errors) = parser.parse();
+        let (expr, parse_errors) = parser.parse_expression();
         assert!(scan_errors.is_empty());
         assert!(parse_errors.is_empty());
-        assert!(!program.is_empty());
+        assert!(expr.is_some());
 
-        let result = super::Interpreter::new().evaluate(&program);
+        let result = super::Interpreter::new().evaluate(&expr.unwrap());
         assert!(result.is_err());
     }
 
@@ -416,7 +476,7 @@ mod run_tests {
     fn happy_case(input: &str, expected: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
-        let (program, parse_errors) = parser.parse();
+        let (program, parse_errors) = parser.parse_program();
         assert!(scan_errors.is_empty());
         assert!(parse_errors.is_empty());
 
@@ -432,7 +492,7 @@ mod run_tests {
     fn sad_case(input: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = crate::parsing::Parser::new(tokens);
-        let (program, parse_errors) = parser.parse();
+        let (program, parse_errors) = parser.parse_program();
         assert!(scan_errors.is_empty());
         assert!(parse_errors.is_empty());
 
@@ -493,6 +553,69 @@ print \"There should be an empty line above this.\";",
 78
 
 There should be an empty line above this.",
+        );
+    }
+
+    #[test]
+    fn expression_statements() {
+        happy_case(
+            "(37 + 42 - 21) > (76 - 37) * 2;
+print !false;
+\"baz\" + \"hello\" + \"quz\" + \"bar\" == \"bazhelloquzbar\";
+print !false;",
+            "true
+true",
+        );
+
+        happy_case(
+            r#"27 - 60 >= -99 * 2 / 99 + 76;
+true == true;
+("world" == "bar") == ("baz" != "hello");
+print true;"#,
+            "true",
+        );
+
+        sad_case(
+            r#"print "the expression below is invalid";
+49 + "baz";
+print "this should not be printed";"#,
+        );
+
+        sad_case(
+            r#"print "79" + "baz";
+print false * (18 + 84);"#,
+        );
+    }
+
+    #[test]
+    fn declare_variables() {
+        happy_case(
+            "var world = 10;
+print world;",
+            "10",
+        );
+
+        happy_case(
+            "var bar = 99;
+var foo = 99;
+print bar + foo;
+var quz = 99;
+print bar + foo + quz;",
+            "198
+297",
+        );
+
+        happy_case(
+            "var foo = (8 * (62 + 62)) / 4 + 62;
+print foo;",
+            "310",
+        );
+
+        happy_case(
+            "var quz = 76;
+var baz = quz;
+print baz + quz;",
+            "152",
         );
     }
 }

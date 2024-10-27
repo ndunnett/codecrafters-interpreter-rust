@@ -78,6 +78,7 @@ impl fmt::Display for BinaryOperator {
 
 #[derive(Clone)]
 pub enum Statement {
+    VarDecl(String, Option<Expr>),
     Expr(Expr),
     Print(Expr),
 }
@@ -85,6 +86,13 @@ pub enum Statement {
 impl fmt::Debug for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::VarDecl(name, init) => {
+                if let Some(init) = init {
+                    write!(f, "(var {name} = {init:?})")
+                } else {
+                    write!(f, "(var {name})")
+                }
+            }
             Self::Expr(expr) => write!(f, "{expr:?}"),
             Self::Print(expr) => write!(f, "(print {expr:?})"),
         }
@@ -94,6 +102,13 @@ impl fmt::Debug for Statement {
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::VarDecl(name, init) => {
+                if let Some(init) = init {
+                    write!(f, "(var {name} = {init})")
+                } else {
+                    write!(f, "(var {name})")
+                }
+            }
             Self::Expr(expr) => write!(f, "{expr}"),
             Self::Print(expr) => write!(f, "(print {expr})"),
         }
@@ -108,6 +123,8 @@ impl From<Statement> for String {
 
 #[derive(Clone)]
 pub enum Expr {
+    Assignment(String, Box<Expr>),
+    Variable(String),
     Literal(Literal),
     Unary {
         op: UnaryOperator,
@@ -124,6 +141,8 @@ pub enum Expr {
 impl fmt::Debug for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Assignment(name, expr) => write!(f, "(assign {name}, {expr:?})"),
+            Self::Variable(name) => write!(f, "{name}"),
             Self::Literal(literal) => write!(f, "{literal:?}"),
             Self::Unary { op, right } => write!(f, "({op} {right:?})"),
             Self::Binary { op, left, right } => write!(f, "({op} {left:?} {right:?})"),
@@ -135,6 +154,8 @@ impl fmt::Debug for Expr {
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Assignment(name, expr) => write!(f, "(assign {name}, {expr})"),
+            Self::Variable(name) => write!(f, "{name}"),
             Self::Literal(literal) => write!(f, "{literal}"),
             Self::Unary { op, right } => write!(f, "({op} {right})"),
             Self::Binary { op, left, right } => write!(f, "({op} {left} {right})"),

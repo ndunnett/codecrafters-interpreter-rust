@@ -9,6 +9,8 @@ use crate::{
 pub enum ParserErrorType {
     UnexpectedToken(String),
     ExpectedToken(String),
+    InvalidAssignmentTarget,
+    InvalidAssignmentValue,
     IncompleteParse,
 }
 
@@ -17,6 +19,8 @@ impl fmt::Display for ParserErrorType {
         match self {
             Self::UnexpectedToken(s) => write!(f, "Unexpected token: {s}"),
             Self::ExpectedToken(s) => write!(f, "Expected token: {s}"),
+            Self::InvalidAssignmentTarget => write!(f, "Invalid assignment target."),
+            Self::InvalidAssignmentValue => write!(f, "Invalid assignment value."),
             Self::IncompleteParse => write!(f, "Failed to consume all tokens."),
         }
     }
@@ -51,7 +55,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> (Vec<Statement>, Vec<ParserError>) {
+    pub fn parse_program(&mut self) -> (Vec<Statement>, Vec<ParserError>) {
         let mut program = Vec::new();
 
         while let Some(stmt) = self.statement() {
@@ -67,6 +71,20 @@ impl<'a> Parser<'a> {
         }
 
         (program, self.errors.clone())
+    }
+
+    pub fn parse_expression(&mut self) -> (Option<Expr>, Vec<ParserError>) {
+        let expr = self.expression();
+
+        if self.matches(&TokenType::Semicolon) {
+            self.advance();
+        }
+
+        if !self.is_at_end() {
+            self.add_error(ParserErrorType::IncompleteParse);
+        }
+
+        (expr, self.errors.clone())
     }
 
     fn is_at_end(&self) -> bool {
@@ -99,17 +117,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume(&mut self, type_: &TokenType) -> bool {
+    fn consume(&mut self, type_: &TokenType) -> Option<&Token> {
         if self.matches(type_) {
             self.advance();
-            true
+            Some(self.previous())
         } else {
             self.add_error(ParserErrorType::ExpectedToken(format!(
                 "{}, found {}",
                 type_,
                 self.peek(),
             )));
-            false
+            None
         }
     }
 
@@ -122,24 +140,41 @@ impl<'a> Parser<'a> {
             column: token.column,
         });
 
-        self.advance();
-
         while !self.is_at_end() {
+            self.advance();
+
             if self.previous().type_ == TokenType::Semicolon {
                 break;
-            } else {
-                self.advance();
             }
         }
     }
 
     fn statement(&mut self) -> Option<Statement> {
-        if self.matches(&TokenType::Print) {
-            self.advance();
-            self.print_stmt()
-        } else {
-            self.expression_stmt()
+        match self.peek().type_ {
+            TokenType::Var => {
+                self.advance();
+                self.variable_declaration()
+            }
+            TokenType::Print => {
+                self.advance();
+                self.print_stmt()
+            }
+            _ => self.expression_stmt(),
         }
+    }
+
+    fn variable_declaration(&mut self) -> Option<Statement> {
+        let name = String::from(self.consume(&TokenType::Identifier)?.lexeme?);
+
+        let initialiser = if self.matches(&TokenType::Equal) {
+            self.advance();
+            self.expression()
+        } else {
+            None
+        };
+
+        self.consume(&TokenType::Semicolon);
+        Some(Statement::VarDecl(name, initialiser))
     }
 
     fn print_stmt(&mut self) -> Option<Statement> {
@@ -150,16 +185,32 @@ impl<'a> Parser<'a> {
 
     fn expression_stmt(&mut self) -> Option<Statement> {
         let expr = self.expression()?;
-
-        if self.matches(&TokenType::Semicolon) {
-            self.advance();
-        }
-
+        self.consume(&TokenType::Semicolon);
         Some(Statement::Expr(expr))
     }
 
     fn expression(&mut self) -> Option<Expr> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Option<Expr> {
+        let expr = self.equality();
+
+        if self.matches(&TokenType::Equal) {
+            if let Some(Expr::Variable(name)) = expr {
+                if let Some(value) = self.assignment() {
+                    Some(Expr::Assignment(name, Box::new(value)))
+                } else {
+                    self.add_error(ParserErrorType::InvalidAssignmentValue);
+                    None
+                }
+            } else {
+                self.add_error(ParserErrorType::InvalidAssignmentTarget);
+                None
+            }
+        } else {
+            expr
+        }
     }
 
     fn equality(&mut self) -> Option<Expr> {
@@ -258,18 +309,21 @@ impl<'a> Parser<'a> {
             TokenType::False,
             TokenType::Nil,
         ]) {
-            let expr = Expr::Literal(self.tokens[self.current].literal.clone());
             self.advance();
-            Some(expr)
+            Some(Expr::Literal(self.previous().literal.clone()))
         } else if self.matches(&TokenType::LeftParen) {
             self.advance();
             let expr = Expr::Grouping(Box::new(self.expression()?));
 
-            if self.consume(&TokenType::RightParen) {
+            if self.consume(&TokenType::RightParen).is_some() {
                 Some(expr)
             } else {
                 None
             }
+        } else if self.matches(&TokenType::Identifier) {
+            Some(Expr::Variable(String::from(
+                self.consume(&TokenType::Identifier)?.lexeme?,
+            )))
         } else {
             self.add_error(ParserErrorType::UnexpectedToken(format!("{}", self.peek())));
             None
@@ -279,27 +333,20 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod expr_tests {
-    use crate::ast::Statement;
-
     fn happy_case(input: &str, expected: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = super::Parser::new(tokens);
-        let (program, parse_errors) = parser.parse();
+        let (expr, parse_errors) = parser.parse_expression();
         assert!(scan_errors.is_empty());
         assert!(parse_errors.is_empty());
-        assert_eq!(program.len(), 1);
-
-        if let Statement::Expr(expr) = &program[0] {
-            assert_eq!(format!("{expr:?}"), expected);
-        } else {
-            panic!("failed to extract expression from program")
-        }
+        assert!(expr.is_some());
+        assert_eq!(format!("{:?}", expr.unwrap()), expected);
     }
 
     fn sad_case(input: &str, expected: &str) {
         let (tokens, scan_errors) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = super::Parser::new(tokens);
-        let (program, parse_errors) = parser.parse();
+        let (expr, parse_errors) = parser.parse_expression();
         assert!(scan_errors.is_empty());
         assert!(!parse_errors.is_empty());
 
@@ -309,13 +356,11 @@ mod expr_tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let program_output = program
-            .iter()
-            .map(|s| format!("{s:?}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert_eq!([error_output, program_output].join("\n"), expected);
+        if let Some(expr) = expr {
+            assert_eq!([error_output, format!("{expr:?}")].join("\n"), expected);
+        } else {
+            assert_eq!(error_output, expected);
+        }
     }
 
     #[test]
@@ -368,7 +413,7 @@ mod expr_tests {
         let input = "(72 +)";
         let (tokens, _) = crate::scanning::Scanner::new(input).scan_tokens();
         let mut parser = super::Parser::new(tokens);
-        let (_, errors) = parser.parse();
+        let (_, errors) = parser.parse_program();
         assert!(!errors.is_empty());
     }
 }

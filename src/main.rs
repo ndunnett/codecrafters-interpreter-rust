@@ -61,7 +61,7 @@ fn main() {
             "parse" => {
                 let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
                 let mut parser = Parser::new(tokens);
-                let (program, parse_errors) = parser.parse();
+                let (expr, parse_errors) = parser.parse_expression();
 
                 let exit_code = if scan_errors.is_empty() && parse_errors.is_empty() {
                     ExitCode::Ok
@@ -77,8 +77,8 @@ fn main() {
                     eprintln!("{error}");
                 }
 
-                for statement in program {
-                    println!("{statement:?}");
+                if let Some(expr) = expr {
+                    println!("{expr:?}");
                 }
 
                 exit_code.exit()
@@ -86,10 +86,10 @@ fn main() {
             "evaluate" => {
                 let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
                 let mut parser = Parser::new(tokens);
-                let (program, parse_errors) = parser.parse();
+                let (expr, parse_errors) = parser.parse_expression();
 
-                if scan_errors.is_empty() && parse_errors.is_empty() {
-                    match Interpreter::new().evaluate(&program) {
+                if scan_errors.is_empty() && parse_errors.is_empty() && expr.is_some() {
+                    match Interpreter::new().evaluate(&expr.unwrap()) {
                         Ok(result) => {
                             println!("{result}");
                             ExitCode::Ok.exit()
@@ -109,7 +109,7 @@ fn main() {
             "run" => {
                 let (tokens, scan_errors) = Scanner::new(&file_contents).scan_tokens();
                 let mut parser = Parser::new(tokens);
-                let (program, parse_errors) = parser.parse();
+                let (program, parse_errors) = parser.parse_program();
 
                 if scan_errors.is_empty() && parse_errors.is_empty() {
                     match Interpreter::new().run(&program) {
